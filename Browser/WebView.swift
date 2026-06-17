@@ -2,94 +2,30 @@ import SwiftUI
 import WebKit
 
 struct WebView: NSViewRepresentable {
-    let url: URL
-    let acceptsMouseEvents: Bool
+    let webView: BrowserWebView?
     let cornerRadius: CGFloat
 
-    init(url: URL, acceptsMouseEvents: Bool = true, cornerRadius: CGFloat = 0) {
-        self.url = url
-        self.acceptsMouseEvents = acceptsMouseEvents
+    init(webView: BrowserWebView?, cornerRadius: CGFloat = 0) {
+        self.webView = webView
         self.cornerRadius = cornerRadius
     }
 
     func makeNSView(context: Context) -> BrowserWebContainerView {
-        let configuration = WKWebViewConfiguration()
-        configuration.userContentController.addUserScript(Self.mouseEventGateScript)
-
-        let containerView = BrowserWebContainerView(configuration: configuration)
+        let containerView = BrowserWebContainerView()
         containerView.cornerRadius = cornerRadius
-        containerView.acceptsMouseEvents = acceptsMouseEvents
-        containerView.setPageMouseEventsEnabled(acceptsMouseEvents)
-        containerView.load(url)
+        containerView.setWebView(webView)
         return containerView
     }
 
     func updateNSView(_ nsView: BrowserWebContainerView, context: Context) {
         nsView.cornerRadius = cornerRadius
-        nsView.acceptsMouseEvents = acceptsMouseEvents
-        nsView.setPageMouseEventsEnabled(acceptsMouseEvents)
+        nsView.setWebView(webView)
     }
-
-    private static let mouseEventGateScript = WKUserScript(
-        source: """
-        (() => {
-            if (window.__browserMouseEventGateInstalled) {
-                return;
-            }
-
-            window.__browserMouseEventGateInstalled = true;
-            window.__browserMouseEventsEnabled = true;
-
-            const blockedEvents = [
-                "mousemove",
-                "mouseover",
-                "mouseenter",
-                "mouseout",
-                "mouseleave",
-                "pointermove",
-                "pointerover",
-                "pointerenter",
-                "pointerout",
-                "pointerleave",
-                "mousedown",
-                "mouseup",
-                "click",
-                "dblclick",
-                "contextmenu",
-                "wheel"
-            ];
-
-            const blockWhenDisabled = (event) => {
-                if (window.__browserMouseEventsEnabled === false) {
-                    event.stopImmediatePropagation();
-
-                    if (event.cancelable) {
-                        event.preventDefault();
-                    }
-                }
-            };
-
-            for (const eventName of blockedEvents) {
-                window.addEventListener(eventName, blockWhenDisabled, {
-                    capture: true,
-                    passive: false
-                });
-            }
-        })();
-        """,
-        injectionTime: .atDocumentStart,
-        forMainFrameOnly: false
-    )
 }
 
 final class BrowserWebContainerView: NSView {
-    private let webView: BrowserWebView
-
-    var acceptsMouseEvents = true {
-        didSet {
-            webView.acceptsMouseEvents = acceptsMouseEvents
-        }
-    }
+    private var hostedWebView: BrowserWebView?
+    private var hostedWebViewConstraints: [NSLayoutConstraint] = []
 
     var cornerRadius: CGFloat = 0 {
         didSet {
@@ -97,23 +33,12 @@ final class BrowserWebContainerView: NSView {
         }
     }
 
-    init(configuration: WKWebViewConfiguration) {
-        webView = BrowserWebView(frame: .zero, configuration: configuration)
+    init() {
         super.init(frame: .zero)
 
         wantsLayer = true
         layer?.masksToBounds = true
         layer?.cornerCurve = .continuous
-
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(webView)
-
-        NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            webView.topAnchor.constraint(equalTo: topAnchor),
-            webView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
     }
 
     @available(*, unavailable)
@@ -121,23 +46,39 @@ final class BrowserWebContainerView: NSView {
         nil
     }
 
-    func load(_ url: URL) {
-        webView.load(URLRequest(url: url))
+    func setWebView(_ webView: BrowserWebView?) {
+        guard hostedWebView !== webView else {
+            return
+        }
+
+        NSLayoutConstraint.deactivate(hostedWebViewConstraints)
+        hostedWebViewConstraints = []
+        hostedWebView?.removeFromSuperview()
+        hostedWebView = webView
+
+        guard let webView else {
+            return
+        }
+
+        webView.removeFromSuperview()
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(webView)
+
+        hostedWebViewConstraints = [
+            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            webView.topAnchor.constraint(equalTo: topAnchor),
+            webView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ]
+        NSLayoutConstraint.activate(hostedWebViewConstraints)
     }
 
-    func setPageMouseEventsEnabled(_ isEnabled: Bool) {
-        webView.setPageMouseEventsEnabled(isEnabled)
-    }
 }
 
 final class BrowserWebView: WKWebView {
-    var acceptsMouseEvents = true
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        acceptsMouseEvents ? super.hitTest(point) : nil
-    }
-
-    func setPageMouseEventsEnabled(_ isEnabled: Bool) {
-        evaluateJavaScript("window.__browserMouseEventsEnabled = \(isEnabled ? "true" : "false");")
+    static func makeConfiguration() -> WKWebViewConfiguration {
+        let configuration = WKWebViewConfiguration()
+        configuration.applicationNameForUserAgent = "Version/18.0 Safari/605.1.15"
+        return configuration
     }
 }

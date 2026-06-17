@@ -1,6 +1,22 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+final class WindowReference: ObservableObject {
+    @Published private var generation = 0
+
+    private(set) weak var window: NSWindow?
+
+    func update(_ window: NSWindow) {
+        guard self.window !== window else {
+            return
+        }
+
+        self.window = window
+        generation += 1
+    }
+}
+
 struct WindowAccessor: NSViewRepresentable {
     let configure: (NSWindow) -> Void
 
@@ -22,10 +38,13 @@ struct WindowAccessor: NSViewRepresentable {
         }
     }
 
-    static func hideTitlebarAndTrafficLights(_ window: NSWindow) {
+    static func configureLiquidGlassWindow(_ window: NSWindow) {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.hasShadow = true
 
         window.standardWindowButton(.closeButton)?.isHidden = true
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
@@ -49,35 +68,4 @@ private final class DragHandleView: NSView {
             window?.performDrag(with: event)
         }
     }
-}
-
-struct MouseEventBlocker: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        BlockingMouseView()
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-private final class BlockingMouseView: NSView {
-    override var acceptsFirstResponder: Bool {
-        true
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-
-    override func mouseDown(with event: NSEvent) {}
-    override func mouseDragged(with event: NSEvent) {}
-    override func mouseUp(with event: NSEvent) {}
-    override func rightMouseDown(with event: NSEvent) {}
-    override func rightMouseUp(with event: NSEvent) {}
-    override func otherMouseDown(with event: NSEvent) {}
-    override func otherMouseUp(with event: NSEvent) {}
-    override func scrollWheel(with event: NSEvent) {}
 }

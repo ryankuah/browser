@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 struct TrafficLightControls: View {
+    let window: NSWindow?
+
     @State private var isHovered = false
 
     var body: some View {
@@ -12,7 +14,7 @@ struct TrafficLightControls: View {
                 label: "Close",
                 showsIcon: isHovered
             ) {
-                NSApp.keyWindow?.performClose(nil)
+                window?.performClose(nil)
             }
 
             TrafficLightButton(
@@ -21,7 +23,7 @@ struct TrafficLightControls: View {
                 label: "Minimize",
                 showsIcon: isHovered
             ) {
-                NSApp.keyWindow?.miniaturize(nil)
+                window?.miniaturize(nil)
             }
 
             TrafficLightButton(
@@ -30,7 +32,7 @@ struct TrafficLightControls: View {
                 label: "Zoom",
                 showsIcon: isHovered
             ) {
-                NSApp.keyWindow?.zoom(nil)
+                window?.zoom(nil)
             }
         }
         .frame(height: 14)
