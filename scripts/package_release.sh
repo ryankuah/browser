@@ -104,9 +104,10 @@ if [[ "$NOTARIZE" != "0" ]]; then
     --wait
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"
+  spctl --assess --type open --verbose=4 "$DMG_PATH"
+else
+  echo "Skipping notarization and Gatekeeper distribution assessment because NOTARIZE=0." >&2
 fi
-
-spctl --assess --type open --verbose=4 "$DMG_PATH"
 
 if [[ ! -x "$SPARKLE_SIGN_UPDATE" ]]; then
   echo "Missing Sparkle sign_update tool at $SPARKLE_SIGN_UPDATE" >&2
