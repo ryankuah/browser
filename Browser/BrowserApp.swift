@@ -14,42 +14,60 @@ struct BrowserApp: App {
 }
 
 private struct BrowserCommands: Commands {
+    @FocusedValue(\.browserCommandActions) private var browserCommandActions
+
     var body: some Commands {
         CommandGroup(after: .newItem) {
             Button("New Tab") {
-                NotificationCenter.default.post(name: .browserNewTabRequested, object: nil)
+                browserCommandActions?.newTab()
             }
             .keyboardShortcut("t", modifiers: [.command])
+            .disabled(browserCommandActions == nil)
 
             Button("Close Tab") {
-                NotificationCenter.default.post(name: .browserCloseTabRequested, object: nil)
+                browserCommandActions?.closeTab()
             }
             .keyboardShortcut("w", modifiers: [.command])
+            .disabled(browserCommandActions == nil)
 
             Button("Copy Page Link") {
-                NotificationCenter.default.post(name: .browserCopyPageLinkRequested, object: nil)
+                browserCommandActions?.copyPageLink()
             }
             .keyboardShortcut("c", modifiers: [.command, .shift])
+            .disabled(browserCommandActions == nil)
 
             Button("Reload Page") {
-                NotificationCenter.default.post(name: .browserReloadRequested, object: nil)
+                browserCommandActions?.reload()
             }
             .keyboardShortcut("r", modifiers: [.command])
+            .disabled(browserCommandActions == nil)
         }
 
         CommandGroup(after: .appInfo) {
             Button("Show Console") {
-                NotificationCenter.default.post(name: .browserConsoleRequested, object: nil)
+                browserCommandActions?.toggleConsole()
             }
             .keyboardShortcut("j", modifiers: [.command, .option])
+            .disabled(browserCommandActions == nil)
         }
     }
 }
 
-extension Notification.Name {
-    static let browserNewTabRequested = Notification.Name("browserNewTabRequested")
-    static let browserCloseTabRequested = Notification.Name("browserCloseTabRequested")
-    static let browserCopyPageLinkRequested = Notification.Name("browserCopyPageLinkRequested")
-    static let browserReloadRequested = Notification.Name("browserReloadRequested")
-    static let browserConsoleRequested = Notification.Name("browserConsoleRequested")
+struct BrowserCommandActions {
+    var newTab: () -> Void
+    var closeTab: () -> Void
+    var copyPageLink: () -> Void
+    var reload: () -> Void
+    var toggleConsole: () -> Void
+}
+
+private struct BrowserCommandActionsKey: FocusedValueKey {
+    typealias Value = BrowserCommandActions
+}
+
+extension FocusedValues {
+    var browserCommandActions: BrowserCommandActions? {
+        get { self[BrowserCommandActionsKey.self] }
+        set { self[BrowserCommandActionsKey.self] = newValue }
+    }
 }

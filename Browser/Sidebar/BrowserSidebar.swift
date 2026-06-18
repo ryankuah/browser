@@ -272,10 +272,27 @@ private struct BrowserSettingsPanel: View {
                 .opacity(0.45)
 
             VStack(alignment: .leading, spacing: 10) {
-                SettingsRow(title: "Search Engine", value: "Google")
-                SettingsRow(title: "Downloads", value: "~/Downloads")
-                SettingsRow(title: "User Agent", value: "Safari Desktop")
-                SettingsRow(title: "JavaScript", value: "Allowed")
+                SettingsRow(title: "Downloads", value: browser.downloadsDirectoryDisplayPath)
+
+                Divider()
+                    .opacity(0.38)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Search Engine")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 6) {
+                        ForEach(BrowserSearchEngine.allCases, id: \.rawValue) { engine in
+                            SettingsSegmentButton(
+                                title: engine.label,
+                                isSelected: browser.searchEngine == engine
+                            ) {
+                                browser.setSearchEngine(engine)
+                            }
+                        }
+                    }
+                }
 
                 Divider()
                     .opacity(0.38)

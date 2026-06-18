@@ -175,41 +175,23 @@ struct BrowserWindowView: View {
                 windowReference.update(window)
             }
         )
-        .onReceive(NotificationCenter.default.publisher(for: .browserNewTabRequested)) { _ in
-            guard windowReference.window?.isKeyWindow ?? true else {
-                return
+        .focusedSceneValue(\.browserCommandActions, BrowserCommandActions(
+            newTab: {
+                isNewTabPromptPresented = true
+            },
+            closeTab: {
+                browser.closeActiveTab()
+            },
+            copyPageLink: {
+                browser.copyActivePageLink()
+            },
+            reload: {
+                browser.reloadOrStop()
+            },
+            toggleConsole: {
+                isConsolePresented.toggle()
             }
-
-            isNewTabPromptPresented = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .browserCloseTabRequested)) { _ in
-            guard windowReference.window?.isKeyWindow ?? true else {
-                return
-            }
-
-            browser.closeActiveTab()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .browserCopyPageLinkRequested)) { _ in
-            guard windowReference.window?.isKeyWindow ?? true else {
-                return
-            }
-
-            browser.copyActivePageLink()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .browserReloadRequested)) { _ in
-            guard windowReference.window?.isKeyWindow ?? true else {
-                return
-            }
-
-            browser.reloadOrStop()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .browserConsoleRequested)) { _ in
-            guard windowReference.window?.isKeyWindow ?? true else {
-                return
-            }
-
-            isConsolePresented.toggle()
-        }
+        ))
         .onAppear {
             installCommandKeyMonitorIfNeeded()
         }

@@ -1,39 +1,40 @@
 import Foundation
+import SQLite3
 
-struct StoredBrowserSession {
+struct StoredBrowserSession: Sendable {
     let selectedTabID: UUID?
     let tabs: [StoredBrowserTab]
 }
 
-struct StoredBrowserTab {
+struct StoredBrowserTab: Sendable {
     let id: UUID
     let position: Int
     let title: String
     let url: URL?
 }
 
-struct BrowserTabSnapshot {
+struct BrowserTabSnapshot: Sendable {
     let id: UUID
     let position: Int
     let title: String
     let url: URL?
 }
 
-struct StoredBrowserBookmark {
+struct StoredBrowserBookmark: Sendable {
     let id: UUID
     let position: Int
     let title: String
     let url: URL
 }
 
-struct StoredHistorySuggestion {
+struct StoredHistorySuggestion: Sendable {
     let title: String
     let url: URL
     let visitedAt: Date
     let faviconData: Data?
 }
 
-struct StoredMediaPermissionDecision {
+struct StoredMediaPermissionDecision: Sendable {
     let origin: String
     let deviceKind: String
     let isAllowed: Bool
@@ -269,7 +270,7 @@ final class BrowserDatabase {
         }
     }
 
-    func saveBookmark(_ bookmark: BrowserBookmark, position: Int) throws {
+    func saveBookmark(_ bookmark: StoredBrowserBookmark) throws {
         try withStatement(
             """
             INSERT INTO bookmarks (id, position, title, url, created_at, updated_at)
@@ -283,7 +284,7 @@ final class BrowserDatabase {
         ) { statement in
             let now = Date().timeIntervalSince1970
             try statement.bind(bookmark.id.uuidString, at: 1)
-            try statement.bind(Int64(position), at: 2)
+            try statement.bind(Int64(bookmark.position), at: 2)
             try statement.bind(bookmark.title, at: 3)
             try statement.bind(bookmark.url.absoluteString, at: 4)
             try statement.bind(now, at: 5)
@@ -884,17 +885,17 @@ private final class SQLiteStatement {
 }
 
 private enum SQLite {
-    static let ok: Int32 = 0
-    static let row: Int32 = 100
-    static let done: Int32 = 101
-    static let null: Int32 = 5
+    static let ok = SQLITE_OK
+    static let row = SQLITE_ROW
+    static let done = SQLITE_DONE
+    static let null = SQLITE_NULL
 
-    static let openReadWrite: Int32 = 0x00000002
-    static let openCreate: Int32 = 0x00000004
-    static let openFullMutex: Int32 = 0x00010000
+    static let openReadWrite = SQLITE_OPEN_READWRITE
+    static let openCreate = SQLITE_OPEN_CREATE
+    static let openFullMutex = SQLITE_OPEN_FULLMUTEX
 
-    static var transient: UnsafeRawPointer? {
-        UnsafeRawPointer(bitPattern: -1)
+    static var transient: sqlite3_destructor_type {
+        unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     }
 
     static func message(for db: OpaquePointer?) -> String {
@@ -905,96 +906,3 @@ private enum SQLite {
         return String(cString: message)
     }
 }
-
-private typealias SQLiteExecCallback = @convention(c) (
-    UnsafeMutableRawPointer?,
-    Int32,
-    UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
-    UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
-) -> Int32
-
-@_silgen_name("sqlite3_open_v2")
-private func sqlite3_open_v2(
-    _ filename: UnsafePointer<CChar>,
-    _ ppDb: UnsafeMutablePointer<OpaquePointer?>,
-    _ flags: Int32,
-    _ zVfs: UnsafePointer<CChar>?
-) -> Int32
-
-@_silgen_name("sqlite3_close")
-private func sqlite3_close(_ db: OpaquePointer?) -> Int32
-
-@_silgen_name("sqlite3_errmsg")
-private func sqlite3_errmsg(_ db: OpaquePointer?) -> UnsafePointer<CChar>?
-
-@_silgen_name("sqlite3_free")
-private func sqlite3_free(_ pointer: UnsafeMutableRawPointer?)
-
-@_silgen_name("sqlite3_exec")
-private func sqlite3_exec(
-    _ db: OpaquePointer?,
-    _ sql: UnsafePointer<CChar>,
-    _ callback: SQLiteExecCallback?,
-    _ argument: UnsafeMutableRawPointer?,
-    _ errorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
-) -> Int32
-
-@_silgen_name("sqlite3_prepare_v2")
-private func sqlite3_prepare_v2(
-    _ db: OpaquePointer?,
-    _ sql: UnsafePointer<CChar>,
-    _ byteCount: Int32,
-    _ ppStmt: UnsafeMutablePointer<OpaquePointer?>,
-    _ tail: UnsafeMutablePointer<UnsafePointer<CChar>?>?
-) -> Int32
-
-@_silgen_name("sqlite3_finalize")
-private func sqlite3_finalize(_ statement: OpaquePointer?) -> Int32
-
-@_silgen_name("sqlite3_bind_text")
-private func sqlite3_bind_text(
-    _ statement: OpaquePointer?,
-    _ index: Int32,
-    _ text: UnsafePointer<CChar>?,
-    _ byteCount: Int32,
-    _ destructor: UnsafeRawPointer?
-) -> Int32
-
-@_silgen_name("sqlite3_bind_null")
-private func sqlite3_bind_null(_ statement: OpaquePointer?, _ index: Int32) -> Int32
-
-@_silgen_name("sqlite3_bind_int64")
-private func sqlite3_bind_int64(_ statement: OpaquePointer?, _ index: Int32, _ value: Int64) -> Int32
-
-@_silgen_name("sqlite3_bind_double")
-private func sqlite3_bind_double(_ statement: OpaquePointer?, _ index: Int32, _ value: Double) -> Int32
-
-@_silgen_name("sqlite3_bind_blob")
-private func sqlite3_bind_blob(
-    _ statement: OpaquePointer?,
-    _ index: Int32,
-    _ value: UnsafeRawPointer?,
-    _ byteCount: Int32,
-    _ destructor: UnsafeRawPointer?
-) -> Int32
-
-@_silgen_name("sqlite3_step")
-private func sqlite3_step(_ statement: OpaquePointer?) -> Int32
-
-@_silgen_name("sqlite3_column_type")
-private func sqlite3_column_type(_ statement: OpaquePointer?, _ index: Int32) -> Int32
-
-@_silgen_name("sqlite3_column_text")
-private func sqlite3_column_text(_ statement: OpaquePointer?, _ index: Int32) -> UnsafePointer<UInt8>?
-
-@_silgen_name("sqlite3_column_blob")
-private func sqlite3_column_blob(_ statement: OpaquePointer?, _ index: Int32) -> UnsafeRawPointer?
-
-@_silgen_name("sqlite3_column_bytes")
-private func sqlite3_column_bytes(_ statement: OpaquePointer?, _ index: Int32) -> Int32
-
-@_silgen_name("sqlite3_column_int64")
-private func sqlite3_column_int64(_ statement: OpaquePointer?, _ index: Int32) -> Int64
-
-@_silgen_name("sqlite3_column_double")
-private func sqlite3_column_double(_ statement: OpaquePointer?, _ index: Int32) -> Double

@@ -1,234 +1,13 @@
 import AppKit
+import AuthenticationServices
 import Foundation
+import Security
 import WebKit
-
-enum BrowserDownloadStatus: Equatable {
-    case inProgress
-    case finished
-    case failed
-
-    init(storageValue: String) {
-        switch storageValue {
-        case "finished":
-            self = .finished
-        case "failed":
-            self = .failed
-        default:
-            self = .inProgress
-        }
-    }
-
-    var storageValue: String {
-        switch self {
-        case .inProgress:
-            return "inProgress"
-        case .finished:
-            return "finished"
-        case .failed:
-            return "failed"
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .inProgress:
-            return "Downloading"
-        case .finished:
-            return "Finished"
-        case .failed:
-            return "Failed"
-        }
-    }
-}
-
-struct BrowserDownload: Identifiable, Equatable {
-    let id: UUID
-    let sourceURL: URL?
-    var destinationURL: URL?
-    var suggestedFilename: String
-    var receivedBytes: Int64
-    var expectedBytes: Int64?
-    var startedAt: Date
-    var finishedAt: Date?
-    var status: BrowserDownloadStatus
-    var errorMessage: String?
-
-    var displayName: String {
-        destinationURL?.lastPathComponent ?? suggestedFilename
-    }
-
-    var progressFraction: Double? {
-        guard let expectedBytes, expectedBytes > 0 else {
-            return nil
-        }
-
-        return min(max(Double(receivedBytes) / Double(expectedBytes), 0), 1)
-    }
-
-    var detailText: String {
-        if let errorMessage, status == .failed {
-            return errorMessage
-        }
-
-        if status == .inProgress {
-            return "Downloading"
-        }
-
-        return destinationURL?.deletingLastPathComponent().path ?? status.label
-    }
-}
-
-struct BrowserBookmark: Identifiable, Equatable {
-    let id: UUID
-    var title: String
-    var url: URL
-    var favicon: NSImage?
-    var tabID: BrowserTab.ID?
-
-    var displayTitle: String {
-        title.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? url.host() ?? url.absoluteString
-    }
-}
-
-struct BrowserHistorySuggestion: Identifiable, Equatable {
-    var id: String { url.absoluteString }
-
-    var title: String
-    var url: URL
-    var visitedAt: Date
-    var favicon: NSImage?
-
-    var displayTitle: String {
-        title.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? url.host() ?? url.absoluteString
-    }
-}
-
-struct BrowserConsoleMessage: Identifiable, Equatable {
-    let id = UUID()
-    let date: Date
-    let level: String
-    let message: String
-    let url: String?
-    let source: String
-}
-
-enum BrowserMediaDeviceKind: String, CaseIterable, Hashable {
-    case camera
-    case microphone
-
-    var iconSystemName: String {
-        switch self {
-        case .camera:
-            return "video.fill"
-        case .microphone:
-            return "mic.fill"
-        }
-    }
-
-    var accessibilityLabel: String {
-        switch self {
-        case .camera:
-            return "Video Permission"
-        case .microphone:
-            return "Microphone Permission"
-        }
-    }
-}
-
-enum BrowserBezelStyle: String, CaseIterable, Equatable {
-    case liquidGlass
-    case simple
-
-    var label: String {
-        switch self {
-        case .liquidGlass:
-            return "Liquid Glass"
-        case .simple:
-            return "Simple"
-        }
-    }
-}
-
-struct BrowserMediaPermissionSnapshot: Equatable {
-    var hasActivePage: Bool
-    var isCameraAllowed: Bool
-    var isMicrophoneAllowed: Bool
-
-    func isAllowed(_ kind: BrowserMediaDeviceKind) -> Bool {
-        switch kind {
-        case .camera:
-            return isCameraAllowed
-        case .microphone:
-            return isMicrophoneAllowed
-        }
-    }
-}
-
-enum BrowserToastKind: Equatable {
-    case mediaPermission
-    case download
-}
-
-enum BrowserToastStatus: Equatable {
-    case pending
-    case success
-    case failure
-}
-
-struct BrowserToast: Identifiable, Equatable {
-    let id: UUID
-    let kind: BrowserToastKind
-    var title: String
-    var message: String
-    var iconSystemName: String
-    var status: BrowserToastStatus
-    var progressFraction: Double?
-    var downloadID: BrowserDownload.ID?
-}
-
-enum OriginSecurityState {
-    case noPage
-    case secure
-    case local
-    case insecure
-    case certificateError
-
-    var iconSystemName: String {
-        switch self {
-        case .noPage:
-            return "globe"
-        case .secure:
-            return "lock.fill"
-        case .local:
-            return "desktopcomputer"
-        case .insecure:
-            return "exclamationmark.triangle.fill"
-        case .certificateError:
-            return "lock.trianglebadge.exclamationmark.fill"
-        }
-    }
-
-    var accessibilityLabel: String {
-        switch self {
-        case .noPage:
-            return "No page loaded"
-        case .secure:
-            return "Secure HTTPS connection"
-        case .local:
-            return "Local HTTP connection"
-        case .insecure:
-            return "Not secure HTTP connection"
-        case .certificateError:
-            return "Certificate error"
-        }
-    }
-}
 
 @MainActor
 final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDelegate {
-    private static let allowedURLSchemes: Set<String> = ["http", "https"]
-    private static let allowedDownloadURLSchemes: Set<String> = ["http", "https", "blob", "data"]
     private static let consoleMessageLimit = 500
+    private static let passkeyEntitlement = "com.apple.developer.web-browser.public-key-credential"
 
     @Published private(set) var tabs: [BrowserTab] = []
     @Published private(set) var bookmarks: [BrowserBookmark] = []
@@ -238,11 +17,14 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     @Published private(set) var toasts: [BrowserToast] = []
     @Published var selectedTabID: BrowserTab.ID?
     @Published private(set) var bezelStyle: BrowserBezelStyle = .liquidGlass
+    @Published private(set) var searchEngine: BrowserSearchEngine = .google
     @Published private var mountRequestedTabIDs: Set<BrowserTab.ID> = []
     @Published private var mediaPermissionDecisionsByOrigin: [String: [BrowserMediaDeviceKind: Bool]] = [:]
     @Published private(set) var isElementFullscreenActive = false
 
-    private let database: BrowserDatabase?
+    private let persistence = BrowserPersistenceStore()
+    private var startupLoadTask: Task<Void, Never>?
+    private var sessionPersistenceTask: Task<Void, Never>?
     private var mountedTabIDs: Set<BrowserTab.ID> = []
     private var pendingTabLoads: [BrowserTab.ID: URL] = [:]
     private var bookmarkFaviconTasks: [BrowserBookmark.ID: Task<Void, Never>] = [:]
@@ -250,7 +32,8 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     private var toastIDsByDownloadID: [BrowserDownload.ID: BrowserToast.ID] = [:]
     private var mediaPermissionRequests: [BrowserToast.ID: BrowserMediaPermissionRequest] = [:]
     private var toastDismissalTasks: [BrowserToast.ID: Task<Void, Never>] = [:]
-    private var isRestoringSession = false
+    private let passkeyCredentialManager = ASAuthorizationWebBrowserPublicKeyCredentialManager()
+    private var isApplyingStoredState = false
 
     var activeTab: BrowserTab? {
         tabs.first { $0.id == selectedTabID }
@@ -277,41 +60,53 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         )
     }
 
-    override init() {
-        do {
-            database = try BrowserDatabase.openDefault()
-        } catch {
-            database = nil
-            NSLog("Browser persistence disabled: \(error.localizedDescription)")
+    var downloadsDirectoryDisplayPath: String {
+        let path = Self.downloadsDirectory.path
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+
+        if path == homePath {
+            return "~"
         }
 
+        if path.hasPrefix(homePath + "/") {
+            return "~" + path.dropFirst(homePath.count)
+        }
+
+        return path
+    }
+
+    override init() {
         super.init()
-        loadSettings()
-        loadMediaPermissionDecisions()
-        loadBookmarks()
-        loadHistorySuggestions()
-        loadDownloadHistory()
-        restoreSessionOrCreateTab()
+        requestPasskeyAccessIfNeeded()
+        loadPersistedState()
     }
 
     deinit {
+        startupLoadTask?.cancel()
+        sessionPersistenceTask?.cancel()
         bookmarkFaviconTasks.values.forEach { $0.cancel() }
         toastDismissalTasks.values.forEach { $0.cancel() }
     }
 
     func newTab(url: URL? = nil) {
-        guard url != nil else {
-            return
-        }
+        _ = createTab(url: url, persist: true)
+    }
 
-        let tab = makeTab()
+    @discardableResult
+    private func createTab(url: URL?, persist: Bool) -> BrowserTab {
+        let tab = makeTab(url: url)
         tabs.append(tab)
         selectedTabID = tab.id
-        persistSession()
+
+        if persist {
+            persistSession()
+        }
 
         if let url {
             load(url, in: tab)
         }
+
+        return tab
     }
 
     func closeTab(id: BrowserTab.ID) {
@@ -405,7 +200,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     func loadAddress(_ address: String) {
-        guard let url = Self.url(from: address) else {
+        guard let url = BrowserNavigation.url(from: address, searchEngine: searchEngine) else {
             return
         }
 
@@ -417,7 +212,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     func openNewTab(from address: String) -> Bool {
-        guard let url = Self.url(from: address) else {
+        guard let url = BrowserNavigation.url(from: address, searchEngine: searchEngine) else {
             return false
         }
 
@@ -448,7 +243,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
     func toggleBookmarkForActivePage() {
         guard let url = activeTab?.webView.url ?? activeTab?.url,
-              Self.isAllowedNavigationURL(url) else {
+              BrowserNavigation.isAllowedNavigationURL(url) else {
             return
         }
 
@@ -459,7 +254,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
         let bookmark = BrowserBookmark(
             id: UUID(),
-            title: activeTab?.displayTitle ?? BrowserTab.defaultTitle(for: url),
+            title: activeTab?.displayTitle ?? BrowserNavigation.defaultTitle(for: url),
             url: url,
             favicon: activeTab?.favicon,
             tabID: activeTab?.id
@@ -476,13 +271,13 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     func bookmarkTab(id: BrowserTab.ID) {
         guard let tab = tabs.first(where: { $0.id == id }),
               let url = tab.webView.url ?? tab.url,
-              Self.isAllowedNavigationURL(url) else {
+              BrowserNavigation.isAllowedNavigationURL(url) else {
             return
         }
 
         clearBookmarkTabBinding(for: id)
 
-        if let bookmarkIndex = bookmarks.firstIndex(where: { Self.isSameBookmarkPage($0.url, url) }) {
+        if let bookmarkIndex = bookmarks.firstIndex(where: { BrowserNavigation.isSameBookmarkPage($0.url, url) }) {
             bookmarks[bookmarkIndex].tabID = id
             bookmarks[bookmarkIndex].title = tab.displayTitle
             if bookmarks[bookmarkIndex].favicon == nil {
@@ -642,10 +437,19 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
 
         bezelStyle = style
-        do {
-            try database?.saveSetting(key: "bezelStyle", value: style.rawValue)
-        } catch {
-            NSLog("Browser setting save failed: \(error.localizedDescription)")
+        Task { [persistence] in
+            await persistence.saveSetting(key: "bezelStyle", value: style.rawValue)
+        }
+    }
+
+    func setSearchEngine(_ engine: BrowserSearchEngine) {
+        guard searchEngine != engine else {
+            return
+        }
+
+        searchEngine = engine
+        Task { [persistence] in
+            await persistence.saveSetting(key: "searchEngine", value: engine.rawValue)
         }
     }
 
@@ -811,33 +615,99 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         ))
     }
 
-    private func restoreSessionOrCreateTab() {
-        guard let database else { return }
+    private func loadPersistedState() {
+        startupLoadTask?.cancel()
+        startupLoadTask = Task { [weak self, persistence] in
+            let startupData = await persistence.loadStartupData()
+            self?.applyStartupData(startupData)
+        }
+    }
 
-        do {
-            guard let session = try database.loadDefaultSession(), !session.tabs.isEmpty else {
-                return
+    private func applyStartupData(_ startupData: BrowserStartupData) {
+        isApplyingStoredState = true
+
+        applySettings(startupData.settings)
+        applyMediaPermissionDecisions(startupData.mediaPermissionDecisions)
+        downloads = startupData.downloads
+        bookmarks = startupData.bookmarks.map { storedBookmark in
+            BrowserBookmark(
+                id: storedBookmark.id,
+                title: storedBookmark.title,
+                url: storedBookmark.url,
+                favicon: nil,
+                tabID: nil
+            )
+        }
+        bookmarks.forEach(loadBookmarkFaviconIfNeeded)
+        applyHistorySuggestions(startupData.historySuggestions)
+        restoreSession(startupData.session)
+
+        isApplyingStoredState = false
+    }
+
+    private func applySettings(_ settings: [String: String]) {
+        if let rawBezelStyle = settings["bezelStyle"],
+           let storedBezelStyle = BrowserBezelStyle(rawValue: rawBezelStyle) {
+            bezelStyle = storedBezelStyle
+        }
+
+        if let rawSearchEngine = settings["searchEngine"],
+           let storedSearchEngine = BrowserSearchEngine(rawValue: rawSearchEngine) {
+            searchEngine = storedSearchEngine
+        }
+    }
+
+    private func applyMediaPermissionDecisions(_ storedDecisions: [StoredMediaPermissionDecision]) {
+        var decisionsByOrigin: [String: [BrowserMediaDeviceKind: Bool]] = [:]
+
+        for storedDecision in storedDecisions {
+            guard let deviceKind = BrowserMediaDeviceKind(rawValue: storedDecision.deviceKind) else {
+                continue
             }
 
-            isRestoringSession = true
-            let restoredTabs = session.tabs
-                .sorted { $0.position < $1.position }
-                .map { storedTab in
-                    let tab = makeTab(id: storedTab.id, title: storedTab.title, url: storedTab.url)
-                    if let url = storedTab.url {
-                        pendingTabLoads[tab.id] = url
-                    }
-                    return tab
-                }
-
-            tabs = restoredTabs
-            selectedTabID = restoredTabs.contains { $0.id == session.selectedTabID } ? session.selectedTabID : restoredTabs.first?.id
-            isRestoringSession = false
-            persistSession()
-        } catch {
-            isRestoringSession = false
-            NSLog("Browser session restore failed: \(error.localizedDescription)")
+            var decisions = decisionsByOrigin[storedDecision.origin] ?? [:]
+            decisions[deviceKind] = storedDecision.isAllowed
+            decisionsByOrigin[storedDecision.origin] = decisions
         }
+
+        mediaPermissionDecisionsByOrigin = decisionsByOrigin
+    }
+
+    private func applyHistorySuggestions(_ storedSuggestions: [StoredHistorySuggestion]) {
+        historySuggestions = storedSuggestions.compactMap { storedSuggestion in
+            guard BrowserNavigation.isAllowedNavigationURL(storedSuggestion.url) else {
+                return nil
+            }
+
+            return BrowserHistorySuggestion(
+                title: storedSuggestion.title,
+                url: storedSuggestion.url,
+                visitedAt: storedSuggestion.visitedAt,
+                favicon: storedSuggestion.faviconData.flatMap(NSImage.init(data:))
+            )
+        }
+    }
+
+    private func restoreSession(_ session: StoredBrowserSession?) {
+        guard let session, !session.tabs.isEmpty else {
+            tabs = []
+            selectedTabID = nil
+            _ = createTab(url: nil, persist: false)
+            return
+        }
+
+        let restoredTabs = session.tabs
+            .sorted { $0.position < $1.position }
+            .map { storedTab in
+                let tab = makeTab(id: storedTab.id, title: storedTab.title, url: storedTab.url)
+                if let url = storedTab.url {
+                    pendingTabLoads[tab.id] = url
+                }
+                return tab
+            }
+
+        tabs = restoredTabs
+        selectedTabID = restoredTabs.contains { $0.id == session.selectedTabID } ? session.selectedTabID : restoredTabs.first?.id
     }
 
     private func makeTab(
@@ -878,20 +748,58 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         tab.onDownloadDidBegin = { [weak self] tab, download, sourceURL in
             self?.begin(download, from: sourceURL ?? tab.url)
         }
-        tab.onDiagnosticMessage = { [weak self] tab, level, message in
-            self?.appendConsoleMessage(
-                level: level,
-                message: message,
-                url: tab.webView.url?.absoluteString ?? tab.url?.absoluteString,
-                source: "browser"
-            )
-        }
 
         return tab
     }
 
     private func configureWebViewConfiguration(_ configuration: WKWebViewConfiguration) {
         BrowserWebView.configure(configuration, consoleMessageHandler: BrowserConsoleScriptMessageHandler(browser: self))
+    }
+
+    private func requestPasskeyAccessIfNeeded() {
+        guard Self.hasBooleanEntitlement(Self.passkeyEntitlement) else {
+            NSLog("Browser passkey access is unavailable because \(Self.passkeyEntitlement) is not present")
+            return
+        }
+
+        let state = passkeyCredentialManager.authorizationStateForPlatformCredentials
+
+        switch state {
+        case .authorized, .denied:
+            Self.logPasskeyAuthorizationState(state)
+        case .notDetermined:
+            passkeyCredentialManager.requestAuthorizationForPublicKeyCredentials { state in
+                BrowserState.logPasskeyAuthorizationState(state)
+            }
+        @unknown default:
+            BrowserState.logPasskeyAuthorizationState(state)
+        }
+    }
+
+    nonisolated private static func logPasskeyAuthorizationState(_ state: ASAuthorizationWebBrowserPublicKeyCredentialManager.AuthorizationState) {
+        let label: String
+
+        switch state {
+        case .authorized:
+            label = "authorized"
+        case .denied:
+            label = "denied"
+        case .notDetermined:
+            label = "not determined"
+        @unknown default:
+            label = "unknown"
+        }
+
+        NSLog("Browser passkey access is \(label)")
+    }
+
+    nonisolated private static func hasBooleanEntitlement(_ key: String) -> Bool {
+        guard let task = SecTaskCreateFromSelf(nil),
+              let value = SecTaskCopyValueForEntitlement(task, key as CFString, nil) else {
+            return false
+        }
+
+        return (value as? Bool) == true
     }
 
     private func appendConsoleMessage(level: String, message: String, url: String?, source: String) {
@@ -1091,58 +999,6 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
     }
 
-    private func loadDownloadHistory() {
-        do {
-            downloads = try database?.loadRecentDownloads(limit: 50).map { download in
-                guard download.status == .inProgress else {
-                    return download
-                }
-
-                var interruptedDownload = download
-                interruptedDownload.status = .failed
-                interruptedDownload.finishedAt = Date()
-                interruptedDownload.errorMessage = "Interrupted"
-                try? database?.saveDownload(interruptedDownload)
-                return interruptedDownload
-            } ?? []
-        } catch {
-            NSLog("Browser downloads load failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func loadSettings() {
-        do {
-            let settings = try database?.loadSettings() ?? [:]
-            if let rawBezelStyle = settings["bezelStyle"],
-               let storedBezelStyle = BrowserBezelStyle(rawValue: rawBezelStyle) {
-                bezelStyle = storedBezelStyle
-            }
-        } catch {
-            NSLog("Browser settings load failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func loadMediaPermissionDecisions() {
-        do {
-            let storedDecisions = try database?.loadMediaPermissionDecisions() ?? []
-            var decisionsByOrigin: [String: [BrowserMediaDeviceKind: Bool]] = [:]
-
-            for storedDecision in storedDecisions {
-                guard let deviceKind = BrowserMediaDeviceKind(rawValue: storedDecision.deviceKind) else {
-                    continue
-                }
-
-                var decisions = decisionsByOrigin[storedDecision.origin] ?? [:]
-                decisions[deviceKind] = storedDecision.isAllowed
-                decisionsByOrigin[storedDecision.origin] = decisions
-            }
-
-            mediaPermissionDecisionsByOrigin = decisionsByOrigin
-        } catch {
-            NSLog("Browser media permission decisions load failed: \(error.localizedDescription)")
-        }
-    }
-
     private func persistDownload(_ download: WKDownload) {
         guard let id = downloadIDsByDownload[ObjectIdentifier(download)] else {
             return
@@ -1156,29 +1012,24 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             return
         }
 
-        do {
-            try database?.saveDownload(item)
-        } catch {
-            NSLog("Browser download save failed: \(error.localizedDescription)")
+        Task { [persistence] in
+            await persistence.saveDownload(item)
         }
     }
 
     private func persistMediaPermissionDecision(originKey: String, kind: BrowserMediaDeviceKind, isAllowed: Bool) {
-        do {
-            try database?.saveMediaPermissionDecision(
+        Task { [persistence] in
+            await persistence.saveMediaPermissionDecision(
                 origin: originKey,
                 deviceKind: kind.rawValue,
                 isAllowed: isAllowed
             )
-        } catch {
-            NSLog("Browser media permission decision save failed: \(error.localizedDescription)")
         }
     }
 
     private func uniqueDownloadURL(for suggestedFilename: String) -> URL {
         let fileManager = FileManager.default
-        let downloadsDirectory = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+        let downloadsDirectory = Self.downloadsDirectory
         let sanitizedName = sanitizedFilename(suggestedFilename.nonEmpty ?? "Download")
         let baseURL = downloadsDirectory.appendingPathComponent(sanitizedName, isDirectory: false)
 
@@ -1200,6 +1051,12 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         return downloadsDirectory.appendingPathComponent("\(UUID().uuidString)-\(sanitizedName)", isDirectory: false)
     }
 
+    private static var downloadsDirectory: URL {
+        let fileManager = FileManager.default
+        return fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+    }
+
     private func sanitizedFilename(_ filename: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "/\\:")
             .union(.newlines)
@@ -1209,7 +1066,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     private func load(_ url: URL, in tab: BrowserTab) {
-        guard Self.isAllowedNavigationURL(url) else {
+        guard BrowserNavigation.isAllowedNavigationURL(url) else {
             return
         }
 
@@ -1241,11 +1098,16 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             return
         }
 
-        do {
-            try database?.recordHistoryVisit(url: url, title: tab.displayTitle, tabID: tab.id)
-            loadHistorySuggestions()
-        } catch {
-            NSLog("Browser history record failed: \(error.localizedDescription)")
+        let title = tab.displayTitle
+        let tabID = tab.id
+        Task { [weak self, persistence] in
+            let suggestions = await persistence.recordHistoryVisitAndLoadSuggestions(
+                url: url,
+                title: title,
+                tabID: tabID,
+                limit: 80
+            )
+            self?.applyHistorySuggestions(suggestions)
         }
     }
 
@@ -1256,7 +1118,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     private func persistSession() {
-        guard !isRestoringSession else {
+        guard !isApplyingStoredState else {
             return
         }
 
@@ -1271,92 +1133,66 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             )
         }
 
-        do {
-            try database?.saveDefaultSession(tabs: snapshots, selectedTabID: persistedSelectedTabID)
-        } catch {
-            NSLog("Browser session save failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func loadBookmarks() {
-        do {
-            bookmarks = try database?.loadBookmarks().map { storedBookmark in
-                BrowserBookmark(
-                    id: storedBookmark.id,
-                    title: storedBookmark.title,
-                    url: storedBookmark.url,
-                    favicon: nil,
-                    tabID: nil
-                )
-            } ?? []
-            bookmarks.forEach(loadBookmarkFaviconIfNeeded)
-        } catch {
-            NSLog("Browser bookmarks load failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func loadHistorySuggestions() {
-        do {
-            historySuggestions = try database?.loadRecentHistorySuggestions(limit: 80).compactMap { storedSuggestion in
-                guard Self.isAllowedNavigationURL(storedSuggestion.url) else {
-                    return nil
-                }
-
-                return BrowserHistorySuggestion(
-                    title: storedSuggestion.title,
-                    url: storedSuggestion.url,
-                    visitedAt: storedSuggestion.visitedAt,
-                    favicon: storedSuggestion.faviconData.flatMap(NSImage.init(data:))
-                )
-            } ?? []
-        } catch {
-            NSLog("Browser history suggestions load failed: \(error.localizedDescription)")
+        sessionPersistenceTask?.cancel()
+        sessionPersistenceTask = Task { [persistence] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else {
+                return
+            }
+            await persistence.saveDefaultSession(tabs: snapshots, selectedTabID: persistedSelectedTabID)
         }
     }
 
     private func tabFaviconDidLoad(_ tab: BrowserTab, favicon: NSImage) {
         guard let pageURL = tab.url,
-              let origin = Self.originKey(for: pageURL),
+              let origin = BrowserNavigation.originKey(for: pageURL),
               let imageData = favicon.tiffRepresentation else {
             return
         }
 
-        do {
-            try database?.saveFavicon(origin: origin, pageURL: pageURL, imageData: imageData)
-            loadHistorySuggestions()
-        } catch {
-            NSLog("Browser favicon save failed: \(error.localizedDescription)")
+        Task { [weak self, persistence] in
+            let suggestions = await persistence.saveFaviconAndLoadSuggestions(
+                origin: origin,
+                pageURL: pageURL,
+                imageData: imageData,
+                limit: 80
+            )
+            self?.applyHistorySuggestions(suggestions)
         }
     }
 
     private func persistBookmark(_ bookmark: BrowserBookmark, position: Int) {
-        do {
-            try database?.saveBookmark(bookmark, position: position)
-        } catch {
-            NSLog("Browser bookmark save failed: \(error.localizedDescription)")
+        let storedBookmark = StoredBrowserBookmark(
+            id: bookmark.id,
+            position: position,
+            title: bookmark.title,
+            url: bookmark.url
+        )
+        Task { [persistence] in
+            await persistence.saveBookmark(storedBookmark)
         }
     }
 
     private func removeBookmark(id: BrowserBookmark.ID) {
         bookmarkFaviconTasks[id]?.cancel()
         bookmarkFaviconTasks.removeValue(forKey: id)
-        if bookmarks.contains(where: { $0.id == id }) {
-            objectWillChange.send()
-        }
         bookmarks.removeAll { $0.id == id }
 
-        do {
-            try database?.deleteBookmark(id: id)
-            for (index, bookmark) in bookmarks.enumerated() {
-                try database?.saveBookmark(bookmark, position: index)
-            }
-        } catch {
-            NSLog("Browser bookmark delete failed: \(error.localizedDescription)")
+        let remainingBookmarks = bookmarks.enumerated().map { index, bookmark in
+            StoredBrowserBookmark(
+                id: bookmark.id,
+                position: index,
+                title: bookmark.title,
+                url: bookmark.url
+            )
+        }
+        Task { [persistence] in
+            await persistence.deleteBookmarkAndReindex(id: id, remainingBookmarks: remainingBookmarks)
         }
     }
 
     private func bookmark(for url: URL) -> BrowserBookmark? {
-        bookmarks.first { Self.isSameBookmarkPage($0.url, url) }
+        bookmarks.first { BrowserNavigation.isSameBookmarkPage($0.url, url) }
     }
 
     private func bookmarkID(owning tabID: BrowserTab.ID) -> BrowserBookmark.ID? {
@@ -1421,7 +1257,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             return nil
         }
 
-        return Self.originKey(for: url)
+        return BrowserNavigation.originKey(for: url)
     }
 
     private func runAlert(_ alert: NSAlert, attachedTo window: NSWindow?, completion: @escaping (NSApplication.ModalResponse) -> Void) {
@@ -1444,16 +1280,6 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     private func originKey(for origin: WKSecurityOrigin) -> String {
         let port = origin.port == 0 ? "" : ":\(origin.port)"
         return "\(origin.`protocol`)://\(origin.host)\(port)"
-    }
-
-    private static func originKey(for url: URL) -> String? {
-        guard let scheme = url.scheme?.lowercased(),
-              let host = url.host()?.lowercased() else {
-            return nil
-        }
-
-        let port = url.port.map { ":\($0)" } ?? ""
-        return "\(scheme)://\(host)\(port)"
     }
 
     private func setMediaPermissionDecision(_ isAllowed: Bool, for kinds: Set<BrowserMediaDeviceKind>, originKey: String) {
@@ -1504,602 +1330,10 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
     }
 
-    fileprivate static func isAllowedNavigationURL(_ url: URL) -> Bool {
-        guard let scheme = url.scheme?.lowercased() else {
-            return false
-        }
-
-        return allowedURLSchemes.contains(scheme)
-    }
-
-    fileprivate static func isAllowedDownloadURL(_ url: URL) -> Bool {
-        guard let scheme = url.scheme?.lowercased() else {
-            return false
-        }
-
-        return allowedDownloadURLSchemes.contains(scheme)
-    }
-
-    fileprivate static func originSecurityState(for url: URL?) -> OriginSecurityState {
-        guard let url, let scheme = url.scheme?.lowercased() else {
-            return .noPage
-        }
-
-        switch scheme {
-        case "https":
-            return .secure
-        case "http":
-            return isLocalURL(url) ? .local : .insecure
-        default:
-            return .noPage
-        }
-    }
-
-    private static func isLocalURL(_ url: URL) -> Bool {
-        guard let host = url.host()?.lowercased() else {
-            return false
-        }
-
-        return host == "localhost" || host == "127.0.0.1" || host == "::1"
-    }
-
-    private static func url(from address: String) -> URL? {
-        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !trimmed.isEmpty else {
-            return nil
-        }
-
-        if trimmed.contains("://"), let url = URL(string: trimmed) {
-            return isAllowedNavigationURL(url) ? url : nil
-        }
-
-        if !trimmed.contains(where: \.isWhitespace),
-           let components = URLComponents(string: "https://\(trimmed)"),
-           let host = components.host,
-           host.contains(".") || host == "localhost",
-           let url = components.url,
-           isAllowedNavigationURL(url) {
-            return components.url
-        }
-
-        var searchComponents = URLComponents(string: "https://www.google.com/search")!
-        searchComponents.queryItems = [
-            URLQueryItem(name: "q", value: trimmed)
-        ]
-        return searchComponents.url
-    }
-
-    fileprivate static func isSameBookmarkPage(_ lhs: URL, _ rhs: URL) -> Bool {
-        normalizedBookmarkPage(lhs) == normalizedBookmarkPage(rhs)
-    }
-
-    private static func normalizedBookmarkPage(_ url: URL) -> String {
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return url.absoluteString
-        }
-
-        components.scheme = components.scheme?.lowercased()
-        components.host = components.host?.lowercased()
-        components.fragment = nil
-
-        if components.path.count > 1, components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-
-        return components.url?.absoluteString ?? url.absoluteString
-    }
 }
 
 private struct BrowserMediaPermissionRequest {
     let originKey: String
     let deviceKinds: Set<BrowserMediaDeviceKind>
     let handler: (WKPermissionDecision) -> Void
-}
-
-@MainActor
-final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDelegate {
-    let id: UUID
-    let webView: BrowserWebView
-
-    @Published private(set) var title = "New Tab"
-    @Published private(set) var url: URL?
-    @Published private(set) var isLoading = false
-    @Published private(set) var canGoBack = false
-    @Published private(set) var canGoForward = false
-    @Published private(set) var originSecurityState: OriginSecurityState = .noPage
-    @Published private(set) var favicon: NSImage?
-
-    var onStateDidChange: ((BrowserTab) -> Void)?
-    var onNavigationDidFinish: ((BrowserTab) -> Void)?
-    var onFaviconDidLoad: ((BrowserTab, NSImage) -> Void)?
-    var onFullscreenStateDidChange: ((BrowserTab) -> Void)?
-    var onDownloadDidBegin: ((BrowserTab, WKDownload, URL?) -> Void)?
-    var onDiagnosticMessage: ((BrowserTab, String, String) -> Void)?
-
-    private var fullscreenObservation: NSKeyValueObservation?
-    private var faviconLoadTask: Task<Void, Never>?
-    private var faviconRequestID: UUID?
-
-    var displayTitle: String {
-        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New Tab" : title
-    }
-
-    var displaySubtitle: String {
-        url?.absoluteString ?? "No page loaded"
-    }
-
-    var addressText: String {
-        url?.absoluteString ?? ""
-    }
-
-    var displayAddressText: String {
-        guard let url else {
-            return ""
-        }
-
-        return Self.displayAddressText(for: url)
-    }
-
-    init(
-        id: UUID = UUID(),
-        webView: BrowserWebView = BrowserWebView(frame: .zero, configuration: BrowserWebView.makeConfiguration()),
-        title: String = "New Tab",
-        url: URL? = nil
-    ) {
-        self.id = id
-        self.webView = webView
-        super.init()
-
-        self.title = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Self.defaultTitle(for: url) : title
-        self.url = url
-
-        webView.navigationDelegate = self
-        webView.underPageBackgroundColor = .clear
-        fullscreenObservation = webView.observe(\.fullscreenState, options: [.new]) { [weak self] _, _ in
-            Task { @MainActor in
-                guard let self else {
-                    return
-                }
-
-                self.onFullscreenStateDidChange?(self)
-            }
-        }
-        refreshFromWebView(notify: false)
-    }
-
-    deinit {
-        faviconLoadTask?.cancel()
-    }
-
-    func attachUIDelegate(_ delegate: WKUIDelegate) {
-        webView.uiDelegate = delegate
-    }
-
-    func prepareDeferredLoad(_ url: URL) {
-        guard BrowserState.isAllowedNavigationURL(url) else {
-            return
-        }
-
-        self.url = url
-        title = Self.defaultTitle(for: url)
-        isLoading = false
-        originSecurityState = BrowserState.originSecurityState(for: url)
-        clearFavicon()
-        onStateDidChange?(self)
-    }
-
-    func load(_ url: URL) {
-        guard BrowserState.isAllowedNavigationURL(url) else {
-            return
-        }
-
-        self.url = url
-        title = Self.defaultTitle(for: url)
-        isLoading = true
-        originSecurityState = BrowserState.originSecurityState(for: url)
-        clearFavicon()
-        webView.load(URLRequest(url: url))
-        refreshFromWebView()
-    }
-
-    func goBack() {
-        guard webView.canGoBack else {
-            return
-        }
-
-        webView.goBack()
-        refreshFromWebView()
-    }
-
-    func goForward() {
-        guard webView.canGoForward else {
-            return
-        }
-
-        webView.goForward()
-        refreshFromWebView()
-    }
-
-    func reloadOrStop() {
-        if webView.isLoading {
-            webView.stopLoading()
-        } else {
-            webView.reload()
-        }
-
-        refreshFromWebView()
-    }
-
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        originSecurityState = BrowserState.originSecurityState(for: webView.url ?? url)
-        logGoogleDiagnostic(level: "debug", "didStartProvisionalNavigation url=\((webView.url ?? url)?.absoluteString ?? "nil")")
-        refreshFromWebView()
-    }
-
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        logGoogleDiagnostic(level: "debug", "didCommit url=\((webView.url ?? url)?.absoluteString ?? "nil")")
-        refreshFromWebView()
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        refreshFromWebView()
-        logGoogleDiagnostic(level: "debug", "didFinish title=\(displayTitle) url=\((webView.url ?? url)?.absoluteString ?? "nil")")
-        refreshFavicon()
-        onNavigationDidFinish?(self)
-    }
-
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        updateOriginSecurityState(after: error)
-        logGoogleDiagnostic(level: "error", "didFail error=\(error.localizedDescription) url=\((webView.url ?? url)?.absoluteString ?? "nil")")
-        refreshFromWebView()
-    }
-
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        updateOriginSecurityState(after: error)
-        logGoogleDiagnostic(level: "error", "didFailProvisionalNavigation error=\(error.localizedDescription) url=\((webView.url ?? url)?.absoluteString ?? "nil")")
-        refreshFromWebView()
-    }
-
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        refreshFromWebView()
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
-    ) {
-        guard let url = navigationAction.request.url else {
-            decisionHandler(.cancel)
-            return
-        }
-
-        if shouldReloadWithDesktopUserAgent(navigationAction) {
-            webView.load(Self.desktopUserAgentRequest(from: navigationAction.request))
-            decisionHandler(.cancel)
-            return
-        }
-
-        if Self.isGoogleURL(url) {
-            let headers = navigationAction.request.allHTTPHeaderFields ?? [:]
-            logGoogleDiagnostic(
-                level: "debug",
-                "request method=\(navigationAction.request.httpMethod ?? "GET") url=\(url.absoluteString) targetFrameMain=\(navigationAction.targetFrame?.isMainFrame.description ?? "nil") headers=\(Self.formattedHeaders(headers))"
-            )
-        }
-
-        if navigationAction.shouldPerformDownload {
-            decisionHandler(BrowserState.isAllowedDownloadURL(url) ? .download : .cancel)
-            return
-        }
-
-        guard BrowserState.isAllowedNavigationURL(url) else {
-            decisionHandler(.cancel)
-            return
-        }
-
-        decisionHandler(.allow)
-    }
-
-    private func shouldReloadWithDesktopUserAgent(_ navigationAction: WKNavigationAction) -> Bool {
-        guard navigationAction.targetFrame?.isMainFrame == true,
-              let url = navigationAction.request.url,
-              BrowserState.isAllowedNavigationURL(url) else {
-            return false
-        }
-
-        let method = navigationAction.request.httpMethod?.uppercased() ?? "GET"
-        guard method == "GET" || method == "HEAD" else {
-            return false
-        }
-
-        let userAgent = navigationAction.request.value(forHTTPHeaderField: "User-Agent") ?? ""
-        return !userAgent.contains(BrowserWebView.safariUserAgentSuffix)
-    }
-
-    private static func desktopUserAgentRequest(from request: URLRequest) -> URLRequest {
-        var request = request
-        request.setValue(BrowserWebView.desktopSafariUserAgent, forHTTPHeaderField: "User-Agent")
-        return request
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationResponse: WKNavigationResponse,
-        decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
-    ) {
-        if let response = navigationResponse.response as? HTTPURLResponse,
-           let url = response.url,
-           Self.isGoogleURL(url) {
-            logGoogleDiagnostic(
-                level: "debug",
-                "response status=\(response.statusCode) url=\(url.absoluteString) mime=\(response.mimeType ?? "nil") headers=\(Self.formattedHeaders(response.allHeaderFields))"
-            )
-        }
-
-        if navigationResponse.canShowMIMEType {
-            decisionHandler(.allow)
-            return
-        }
-
-        guard let url = navigationResponse.response.url,
-              BrowserState.isAllowedDownloadURL(url) else {
-            decisionHandler(.cancel)
-            return
-        }
-
-        decisionHandler(.download)
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        navigationAction: WKNavigationAction,
-        didBecome download: WKDownload
-    ) {
-        onDownloadDidBegin?(self, download, navigationAction.request.url)
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        navigationResponse: WKNavigationResponse,
-        didBecome download: WKDownload
-    ) {
-        onDownloadDidBegin?(self, download, navigationResponse.response.url)
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping @MainActor @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-
-        guard let serverTrust = challenge.protectionSpace.serverTrust else {
-            originSecurityState = .certificateError
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-
-        var trustError: CFError?
-        guard SecTrustEvaluateWithError(serverTrust, &trustError) else {
-            originSecurityState = .certificateError
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-
-        originSecurityState = BrowserState.originSecurityState(for: webView.url ?? url)
-        completionHandler(.useCredential, URLCredential(trust: serverTrust))
-    }
-
-    private func logGoogleDiagnostic(level: String, _ message: String) {
-        guard Self.isGoogleURL(webView.url ?? url) || message.contains("google.") else {
-            return
-        }
-
-        onDiagnosticMessage?(self, level, "[Google] \(message)")
-    }
-
-    private static func isGoogleURL(_ url: URL?) -> Bool {
-        guard let host = url?.host()?.lowercased() else {
-            return false
-        }
-
-        return host == "google.com" || host.hasSuffix(".google.com")
-    }
-
-    private static func formattedHeaders<Key: Hashable, Value>(_ headers: [Key: Value]) -> String {
-        headers
-            .map { key, value in "\(key): \(value)" }
-            .sorted()
-            .joined(separator: "; ")
-    }
-
-    private func refreshFromWebView(notify: Bool = true) {
-        url = webView.url ?? url
-
-        if let webTitle = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines), !webTitle.isEmpty {
-            title = webTitle
-        } else if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title == "New Tab" {
-            title = Self.defaultTitle(for: url)
-        }
-
-        isLoading = webView.isLoading
-        canGoBack = webView.canGoBack
-        canGoForward = webView.canGoForward
-        if originSecurityState != .certificateError {
-            originSecurityState = BrowserState.originSecurityState(for: webView.url ?? url)
-        }
-
-        if notify {
-            onStateDidChange?(self)
-        }
-    }
-
-    private func clearFavicon() {
-        faviconLoadTask?.cancel()
-        faviconLoadTask = nil
-        faviconRequestID = nil
-        favicon = nil
-    }
-
-    private func refreshFavicon() {
-        guard let pageURL = webView.url ?? url,
-              BrowserState.isAllowedNavigationURL(pageURL) else {
-            clearFavicon()
-            return
-        }
-
-        faviconLoadTask?.cancel()
-        favicon = nil
-
-        let requestID = UUID()
-        faviconRequestID = requestID
-        faviconLoadTask = Task { [weak self] in
-            await self?.loadFavicon(for: pageURL, requestID: requestID)
-        }
-    }
-
-    private func loadFavicon(for pageURL: URL, requestID: UUID) async {
-        guard let image = await Self.fetchFavicon(for: pageURL, webView: webView),
-              faviconRequestID == requestID else {
-            if faviconRequestID == requestID {
-                favicon = nil
-            }
-            return
-        }
-
-        favicon = image
-        onFaviconDidLoad?(self, image)
-    }
-
-    fileprivate static func fetchFavicon(for pageURL: URL, webView: WKWebView?) async -> NSImage? {
-        let candidates = await faviconCandidateURLs(for: pageURL, webView: webView)
-
-        for candidate in candidates {
-            guard !Task.isCancelled else {
-                return nil
-            }
-
-            do {
-                var request = URLRequest(url: candidate)
-                request.cachePolicy = .returnCacheDataElseLoad
-                request.timeoutInterval = 8
-
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard !Task.isCancelled else {
-                    return nil
-                }
-
-                if let httpResponse = response as? HTTPURLResponse,
-                   !(200..<300).contains(httpResponse.statusCode) {
-                    continue
-                }
-
-                guard let image = NSImage(data: data), image.isValid else {
-                    continue
-                }
-
-                return image
-            } catch {
-                continue
-            }
-        }
-
-        return nil
-    }
-
-    private static func faviconCandidateURLs(for pageURL: URL, webView: WKWebView?) async -> [URL] {
-        var urls: [URL] = []
-        let script = """
-        (() => Array.from(document.querySelectorAll('link[rel]'))
-            .filter((link) => link.rel && link.rel.toLowerCase().includes('icon'))
-            .map((link) => link.href)
-            .filter(Boolean))()
-        """
-
-        if let webView,
-           let rawIconURLs = try? await webView.evaluateJavaScript(script) as? [String] {
-            urls.append(contentsOf: rawIconURLs.compactMap(URL.init(string:)))
-        }
-
-        if let fallbackURL = Self.defaultFaviconURL(for: pageURL) {
-            urls.append(fallbackURL)
-        }
-
-        var seen = Set<String>()
-        return urls.filter { url in
-            guard BrowserState.isAllowedNavigationURL(url) else {
-                return false
-            }
-
-            return seen.insert(url.absoluteString).inserted
-        }
-    }
-
-    private static func defaultFaviconURL(for pageURL: URL) -> URL? {
-        guard var components = URLComponents(url: pageURL, resolvingAgainstBaseURL: false),
-              components.host != nil else {
-            return nil
-        }
-
-        components.path = "/favicon.ico"
-        components.query = nil
-        components.fragment = nil
-        return components.url
-    }
-
-    fileprivate static func defaultTitle(for url: URL?) -> String {
-        if let host = url?.host(), !host.isEmpty {
-            return host
-        }
-
-        return "New Tab"
-    }
-
-    private static func displayAddressText(for url: URL) -> String {
-        guard let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else {
-            return url.absoluteString
-        }
-
-        var displayText = url.absoluteString
-
-        if let schemeRange = displayText.range(of: "\(scheme)://", options: [.caseInsensitive, .anchored]) {
-            displayText.removeSubrange(schemeRange)
-        }
-
-        if let wwwRange = displayText.range(of: "www.", options: [.caseInsensitive, .anchored]) {
-            displayText.removeSubrange(wwwRange)
-        }
-
-        return displayText
-    }
-
-    private func updateOriginSecurityState(after error: Error) {
-        let nsError = error as NSError
-        let certificateErrorCodes: Set<Int> = [
-            NSURLErrorServerCertificateHasBadDate,
-            NSURLErrorServerCertificateUntrusted,
-            NSURLErrorServerCertificateHasUnknownRoot,
-            NSURLErrorServerCertificateNotYetValid,
-            NSURLErrorClientCertificateRejected,
-            NSURLErrorClientCertificateRequired,
-            NSURLErrorSecureConnectionFailed
-        ]
-
-        if nsError.domain == NSURLErrorDomain, certificateErrorCodes.contains(nsError.code) {
-            originSecurityState = .certificateError
-        }
-    }
-}
-
-private extension String {
-    var nonEmpty: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
 }

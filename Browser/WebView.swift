@@ -232,10 +232,6 @@ final class BrowserWebView: WKWebView {
         super.cursorUpdate(with: event)
     }
 
-    override func resetCursorRects() {
-        super.resetCursorRects()
-    }
-
     static func makeConfiguration() -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configure(configuration)
@@ -243,7 +239,7 @@ final class BrowserWebView: WKWebView {
     }
 
     static func configure(_ configuration: WKWebViewConfiguration, consoleMessageHandler: WKScriptMessageHandler? = nil) {
-        configuration.applicationNameForUserAgent = "Version/18.0 Safari/605.1.15"
+        configuration.applicationNameForUserAgent = Self.safariUserAgentSuffix
         configuration.preferences.isElementFullscreenEnabled = true
 
         let preferences = WKWebpagePreferences()

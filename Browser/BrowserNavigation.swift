@@ -1,0 +1,125 @@
+import Foundation
+
+enum BrowserNavigation {
+    private static let allowedURLSchemes: Set<String> = ["http", "https"]
+    private static let allowedDownloadURLSchemes: Set<String> = ["http", "https", "blob", "data"]
+
+    static func url(from address: String, searchEngine: BrowserSearchEngine) -> URL? {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.contains("://"), let url = URL(string: trimmed) {
+            return isAllowedNavigationURL(url) ? url : nil
+        }
+
+        if !trimmed.contains(where: \.isWhitespace),
+           let components = URLComponents(string: "https://\(trimmed)"),
+           let host = components.host,
+           host.contains(".") || host == "localhost",
+           let url = components.url,
+           isAllowedNavigationURL(url) {
+            return url
+        }
+
+        return searchEngine.searchURL(for: trimmed)
+    }
+
+    static func isAllowedNavigationURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else {
+            return false
+        }
+
+        return allowedURLSchemes.contains(scheme)
+    }
+
+    static func isAllowedDownloadURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else {
+            return false
+        }
+
+        return allowedDownloadURLSchemes.contains(scheme)
+    }
+
+    static func originSecurityState(for url: URL?) -> OriginSecurityState {
+        guard let url, let scheme = url.scheme?.lowercased() else {
+            return .noPage
+        }
+
+        switch scheme {
+        case "https":
+            return .secure
+        case "http":
+            return isLocalURL(url) ? .local : .insecure
+        default:
+            return .noPage
+        }
+    }
+
+    static func originKey(for url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = url.host()?.lowercased() else {
+            return nil
+        }
+
+        let port = url.port.map { ":\($0)" } ?? ""
+        return "\(scheme)://\(host)\(port)"
+    }
+
+    static func isSameBookmarkPage(_ lhs: URL, _ rhs: URL) -> Bool {
+        normalizedBookmarkPage(lhs) == normalizedBookmarkPage(rhs)
+    }
+
+    static func defaultTitle(for url: URL?) -> String {
+        if let host = url?.host(), !host.isEmpty {
+            return host
+        }
+
+        return "New Tab"
+    }
+
+    static func displayAddressText(for url: URL) -> String {
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return url.absoluteString
+        }
+
+        var displayText = url.absoluteString
+
+        if let schemeRange = displayText.range(of: "\(scheme)://", options: [.caseInsensitive, .anchored]) {
+            displayText.removeSubrange(schemeRange)
+        }
+
+        if let wwwRange = displayText.range(of: "www.", options: [.caseInsensitive, .anchored]) {
+            displayText.removeSubrange(wwwRange)
+        }
+
+        return displayText
+    }
+
+    private static func isLocalURL(_ url: URL) -> Bool {
+        guard let host = url.host()?.lowercased() else {
+            return false
+        }
+
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+    }
+
+    private static func normalizedBookmarkPage(_ url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url.absoluteString
+        }
+
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+        components.fragment = nil
+
+        if components.path.count > 1, components.path.hasSuffix("/") {
+            components.path.removeLast()
+        }
+
+        return components.url?.absoluteString ?? url.absoluteString
+    }
+}
