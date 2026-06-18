@@ -7,6 +7,7 @@ SCHEME="Browser"
 CONFIGURATION="Release"
 DERIVED_DATA="$ROOT_DIR/build/DerivedData"
 RELEASE_DIR="$ROOT_DIR/build/release"
+DMG_STAGING_DIR="$ROOT_DIR/build/dmg-staging"
 SPARKLE_SIGN_UPDATE="${SPARKLE_SIGN_UPDATE:-$ROOT_DIR/build/sparkle-tools/bin/sign_update}"
 REPO_URL="${REPO_URL:-https://github.com/ryankuah/browser}"
 
@@ -35,9 +36,14 @@ xcodebuild \
   clean build
 
 rm -f "$DMG_PATH"
+rm -rf "$DMG_STAGING_DIR"
+mkdir -p "$DMG_STAGING_DIR"
+cp -R "$APP_PATH" "$DMG_STAGING_DIR/"
+ln -s /Applications "$DMG_STAGING_DIR/Applications"
+
 hdiutil create \
   -volname "Browser" \
-  -srcfolder "$APP_PATH" \
+  -srcfolder "$DMG_STAGING_DIR" \
   -ov \
   -format UDZO \
   "$DMG_PATH"
