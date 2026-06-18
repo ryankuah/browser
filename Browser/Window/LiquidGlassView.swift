@@ -32,3 +32,43 @@ struct LiquidGlassView: NSViewRepresentable {
         view.tintColor = tintColor
     }
 }
+
+struct BrowserChromeBackground: View {
+    enum Effect {
+        case liquidGlass(style: NSGlassEffectView.Style, tintColor: NSColor? = nil)
+        case material
+    }
+
+    let bezelStyle: BrowserBezelStyle
+    let cornerRadius: CGFloat
+    let effect: Effect
+
+    init(
+        bezelStyle: BrowserBezelStyle,
+        cornerRadius: CGFloat,
+        effect: Effect
+    ) {
+        self.bezelStyle = bezelStyle
+        self.cornerRadius = cornerRadius
+        self.effect = effect
+    }
+
+    var body: some View {
+        if bezelStyle == .simple {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color.black)
+        } else {
+            switch effect {
+            case .liquidGlass(let style, let tintColor):
+                LiquidGlassView(
+                    style: style,
+                    cornerRadius: cornerRadius,
+                    tintColor: tintColor
+                )
+            case .material:
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.regularMaterial)
+            }
+        }
+    }
+}

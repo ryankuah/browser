@@ -15,6 +15,8 @@
 		2B336D762C3D4C8300B63C2B /* TrafficLightControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D752C3D4C8300B63C2B /* TrafficLightControls.swift */; };
 		2B336D782C3D4C8300B63C2B /* LiquidGlassView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D772C3D4C8300B63C2B /* LiquidGlassView.swift */; };
 		2B336D7E2C3D4C8400B63C2B /* BrowserState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D7D2C3D4C8400B63C2B /* BrowserState.swift */; };
+		2B336D802C3D4C8500B63C2B /* BrowserDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D7F2C3D4C8500B63C2B /* BrowserDatabase.swift */; };
+		2B336D832C3D4C8600B63C2B /* CursorModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D822C3D4C8600B63C2B /* CursorModifier.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +30,8 @@
 		2B336D752C3D4C8300B63C2B /* TrafficLightControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrafficLightControls.swift; sourceTree = "<group>"; };
 		2B336D772C3D4C8300B63C2B /* LiquidGlassView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlassView.swift; sourceTree = "<group>"; };
 		2B336D7D2C3D4C8400B63C2B /* BrowserState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserState.swift; sourceTree = "<group>"; };
+		2B336D7F2C3D4C8500B63C2B /* BrowserDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserDatabase.swift; sourceTree = "<group>"; };
+		2B336D822C3D4C8600B63C2B /* CursorModifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorModifier.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,6 +68,8 @@
 				2B336D712C3D4C8300B63C2B /* BrowserWindowView.swift */,
 				2B336D7D2C3D4C8400B63C2B /* BrowserState.swift */,
 				2B336D662C3D4C8000B63C2B /* WebView.swift */,
+				2B336D822C3D4C8600B63C2B /* CursorModifier.swift */,
+				2B336D812C3D4C8500B63C2B /* Persistence */,
 				2B336D7B2C3D4C8300B63C2B /* Sidebar */,
 				2B336D7C2C3D4C8300B63C2B /* Window */,
 				2B336D692C3D4C8000B63C2B /* Browser.entitlements */,
@@ -87,6 +93,14 @@
 				2B336D772C3D4C8300B63C2B /* LiquidGlassView.swift */,
 			);
 			path = Window;
+			sourceTree = "<group>";
+		};
+		2B336D812C3D4C8500B63C2B /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				2B336D7F2C3D4C8500B63C2B /* BrowserDatabase.swift */,
+			);
+			path = Persistence;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -161,8 +175,10 @@
 				2B336D722C3D4C8300B63C2B /* BrowserWindowView.swift in Sources */,
 				2B336D682C3D4C8000B63C2B /* WebView.swift in Sources */,
 				2B336D7E2C3D4C8400B63C2B /* BrowserState.swift in Sources */,
+				2B336D802C3D4C8500B63C2B /* BrowserDatabase.swift in Sources */,
 				2B336D742C3D4C8300B63C2B /* BrowserSidebar.swift in Sources */,
 				2B336D762C3D4C8300B63C2B /* TrafficLightControls.swift in Sources */,
+				2B336D832C3D4C8600B63C2B /* CursorModifier.swift in Sources */,
 				2B336D702C3D4C8200B63C2B /* WindowAccessor.swift in Sources */,
 				2B336D782C3D4C8300B63C2B /* LiquidGlassView.swift in Sources */,
 			);
@@ -299,13 +315,16 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Browser needs camera access for websites you allow.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Browser needs microphone access for websites you allow.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = "-lsqlite3";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ryankuah.browser;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -323,13 +342,16 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Browser needs camera access for websites you allow.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Browser needs microphone access for websites you allow.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = "-lsqlite3";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ryankuah.browser;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -38,13 +38,23 @@ struct WindowAccessor: NSViewRepresentable {
         }
     }
 
-    static func configureLiquidGlassWindow(_ window: NSWindow) {
+    static func configureBrowserWindow(_ window: NSWindow, bezelStyle: BrowserBezelStyle) {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
-        window.backgroundColor = .clear
-        window.isOpaque = false
         window.hasShadow = true
+        window.contentView?.wantsLayer = true
+
+        switch bezelStyle {
+        case .liquidGlass:
+            window.backgroundColor = .clear
+            window.isOpaque = false
+            window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+        case .simple:
+            window.backgroundColor = .black
+            window.isOpaque = true
+            window.contentView?.layer?.backgroundColor = NSColor.black.cgColor
+        }
 
         window.standardWindowButton(.closeButton)?.isHidden = true
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true

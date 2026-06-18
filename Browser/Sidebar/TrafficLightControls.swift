@@ -37,7 +37,10 @@ struct TrafficLightControls: View {
         }
         .frame(height: 14)
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
+        .onHover { isHovered in
+            self.isHovered = isHovered
+        }
+        .cursor(.pointingHand)
     }
 }
 
