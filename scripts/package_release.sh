@@ -69,6 +69,7 @@ APP_PATH="$DERIVED_DATA/Build/Products/$CONFIGURATION/Browser.app"
 DMG_NAME="Browser-$VERSION.dmg"
 DMG_PATH="$RELEASE_DIR/$DMG_NAME"
 APPCAST_PATH="$RELEASE_DIR/appcast.xml"
+SPARKLE_FRAMEWORK="$APP_PATH/Contents/Frameworks/Sparkle.framework"
 
 xcodebuild \
   -project "$PROJECT" \
@@ -81,6 +82,23 @@ xcodebuild \
   ENABLE_HARDENED_RUNTIME=YES \
   clean build
 
+if [[ -d "$SPARKLE_FRAMEWORK" ]]; then
+  find "$SPARKLE_FRAMEWORK" -type d \( -name '*.xpc' -o -name '*.app' \) -print0 |
+    while IFS= read -r -d '' item; do
+      codesign --force --sign "$DEVELOPER_ID_APPLICATION" --options runtime --timestamp "$item"
+    done
+  if [[ -f "$SPARKLE_FRAMEWORK/Versions/Current/Autoupdate" ]]; then
+    codesign --force --sign "$DEVELOPER_ID_APPLICATION" --options runtime --timestamp "$SPARKLE_FRAMEWORK/Versions/Current/Autoupdate"
+  fi
+  codesign --force --sign "$DEVELOPER_ID_APPLICATION" --options runtime --timestamp "$SPARKLE_FRAMEWORK"
+fi
+
+codesign --force \
+  --sign "$DEVELOPER_ID_APPLICATION" \
+  --options runtime \
+  --timestamp \
+  --entitlements "$ROOT_DIR/Browser/Browser.entitlements" \
+  "$APP_PATH"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 rm -f "$DMG_PATH"
@@ -104,7 +122,7 @@ if [[ "$NOTARIZE" != "0" ]]; then
     --wait
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"
-  spctl --assess --type open --verbose=4 "$DMG_PATH"
+  spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_PATH"
 else
   echo "Skipping notarization and Gatekeeper distribution assessment because NOTARIZE=0." >&2
 fi
