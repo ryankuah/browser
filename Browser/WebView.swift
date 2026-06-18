@@ -429,17 +429,82 @@ final class BrowserWebView: WKWebView {
         ].join(",")));
       };
 
-      const setPlaybackSpeed = speed => {
+      const clampPlaybackSpeed = speed => Math.min(16, Math.max(0.25, speed));
+
+      const formatPlaybackSpeed = speed => {
+        const rounded = Math.round(speed * 100) / 100;
+        return Number.isInteger(rounded) ? `${rounded}x` : `${rounded.toFixed(2).replace(/0$/, "")}x`;
+      };
+
+      const getPreferredVideo = () => {
         const videos = Array.from(document.querySelectorAll("video"));
-        const video =
+        return (
           videos.find(candidate => !candidate.paused && !candidate.ended) ||
           videos.find(candidate => candidate.readyState > 0) ||
-          videos[0];
+          videos[0]
+        );
+      };
+
+      const showPlaybackSpeedPopup = speed => {
+        const video = getPreferredVideo();
+        if (!video) return;
+
+        let popup = document.getElementById("browser-youtube-playback-speed-popup");
+        if (!popup) {
+          popup = document.createElement("div");
+          popup.id = "browser-youtube-playback-speed-popup";
+          popup.setAttribute("aria-live", "polite");
+          Object.assign(popup.style, {
+            position: "fixed",
+            zIndex: "2147483647",
+            padding: "8px 14px",
+            borderRadius: "999px",
+            background: "rgba(8, 8, 10, 0.72)",
+            border: "1px solid rgba(255, 255, 255, 0.18)",
+            boxShadow: "0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18)",
+            backdropFilter: "blur(18px) saturate(160%)",
+            WebkitBackdropFilter: "blur(18px) saturate(160%)",
+            color: "white",
+            font: "600 14px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif",
+            letterSpacing: "0",
+            lineHeight: "1",
+            pointerEvents: "none",
+            opacity: "0",
+            transform: "translate(-50%, -8px) scale(0.98)",
+            transition: "opacity 140ms ease, transform 140ms ease"
+          });
+          document.documentElement.appendChild(popup);
+        }
+
+        const rect = video.getBoundingClientRect();
+        popup.textContent = formatPlaybackSpeed(speed);
+        popup.style.left = `${rect.left + rect.width / 2}px`;
+        popup.style.top = `${Math.max(12, rect.top + 18)}px`;
+        popup.style.opacity = "1";
+        popup.style.transform = "translate(-50%, 0) scale(1)";
+
+        clearTimeout(window.__browserYouTubePlaybackSpeedPopupTimer);
+        window.__browserYouTubePlaybackSpeedPopupTimer = setTimeout(() => {
+          popup.style.opacity = "0";
+          popup.style.transform = "translate(-50%, -8px) scale(0.98)";
+        }, 900);
+      };
+
+      const setPlaybackSpeed = speed => {
+        const video = getPreferredVideo();
 
         if (!video) return;
 
-        video.defaultPlaybackRate = speed;
-        video.playbackRate = speed;
+        const nextSpeed = clampPlaybackSpeed(speed);
+        video.defaultPlaybackRate = nextSpeed;
+        video.playbackRate = nextSpeed;
+        showPlaybackSpeedPopup(nextSpeed);
+      };
+
+      const adjustPlaybackSpeed = delta => {
+        const video = getPreferredVideo();
+        const currentSpeed = video?.playbackRate || 1;
+        setPlaybackSpeed(currentSpeed + delta);
       };
 
       window.addEventListener("keydown", event => {
@@ -449,6 +514,16 @@ final class BrowserWebView: WKWebView {
         if (isEditableTarget(event.target)) return;
 
         switch (event.key.toLowerCase()) {
+        case "s":
+          event.preventDefault();
+          event.stopPropagation();
+          adjustPlaybackSpeed(-0.25);
+          break;
+        case "d":
+          event.preventDefault();
+          event.stopPropagation();
+          adjustPlaybackSpeed(0.25);
+          break;
         case "g":
           event.preventDefault();
           event.stopPropagation();
