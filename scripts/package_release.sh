@@ -10,8 +10,50 @@ RELEASE_DIR="$ROOT_DIR/build/release"
 DMG_STAGING_DIR="$ROOT_DIR/build/dmg-staging"
 SPARKLE_SIGN_UPDATE="${SPARKLE_SIGN_UPDATE:-$ROOT_DIR/build/sparkle-tools/bin/sign_update}"
 REPO_URL="${REPO_URL:-https://github.com/ryankuah/browser}"
+NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-}"
+NOTARIZE="${NOTARIZE:-1}"
+DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-}"
 
 mkdir -p "$RELEASE_DIR"
+
+if [[ -z "$DEVELOPER_ID_APPLICATION" ]]; then
+  DEVELOPER_ID_APPLICATION="$(
+    security find-identity -v -p codesigning |
+      awk -F'"' '/Developer ID Application/ && $0 !~ /REVOKED|CSSMERR/ {print $2; exit}'
+  )"
+fi
+
+if [[ -z "$DEVELOPER_ID_APPLICATION" ]]; then
+  cat >&2 <<'EOF'
+Missing Developer ID Application signing identity.
+
+Install a Developer ID Application certificate in Keychain Access, then rerun:
+  scripts/package_release.sh
+
+You can also pass an explicit identity:
+  DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)" scripts/package_release.sh
+EOF
+  exit 1
+fi
+
+if [[ "$NOTARIZE" != "0" && -z "$NOTARYTOOL_PROFILE" ]]; then
+  cat >&2 <<'EOF'
+Missing notarytool profile.
+
+Create one first, for example:
+  xcrun notarytool store-credentials browser-notary \
+    --apple-id you@example.com \
+    --team-id TEAMID \
+    --password app-specific-password
+
+Then rerun:
+  NOTARYTOOL_PROFILE=browser-notary scripts/package_release.sh
+
+For a local unsigned-by-Gatekeeper test only, bypass notarization with:
+  NOTARIZE=0 scripts/package_release.sh
+EOF
+  exit 1
+fi
 
 VERSION="$(
   xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration "$CONFIGURATION" -showBuildSettings |
@@ -33,7 +75,13 @@ xcodebuild \
   -scheme "$SCHEME" \
   -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED_DATA" \
+  CODE_SIGN_STYLE=Manual \
+  CODE_SIGN_IDENTITY="$DEVELOPER_ID_APPLICATION" \
+  CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+  ENABLE_HARDENED_RUNTIME=YES \
   clean build
+
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 rm -f "$DMG_PATH"
 rm -rf "$DMG_STAGING_DIR"
@@ -47,6 +95,18 @@ hdiutil create \
   -ov \
   -format UDZO \
   "$DMG_PATH"
+
+codesign --force --sign "$DEVELOPER_ID_APPLICATION" --timestamp "$DMG_PATH"
+
+if [[ "$NOTARIZE" != "0" ]]; then
+  xcrun notarytool submit "$DMG_PATH" \
+    --keychain-profile "$NOTARYTOOL_PROFILE" \
+    --wait
+  xcrun stapler staple "$DMG_PATH"
+  xcrun stapler validate "$DMG_PATH"
+fi
+
+spctl --assess --type open --verbose=4 "$DMG_PATH"
 
 if [[ ! -x "$SPARKLE_SIGN_UPDATE" ]]; then
   echo "Missing Sparkle sign_update tool at $SPARKLE_SIGN_UPDATE" >&2
