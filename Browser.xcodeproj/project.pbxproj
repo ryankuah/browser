@@ -22,6 +22,7 @@
 		2B336D892C3D4C8700B63C2B /* BrowserNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D8A2C3D4C8700B63C2B /* BrowserNavigation.swift */; };
 		2B336D8B2C3D4C8700B63C2B /* BrowserPersistenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D8C2C3D4C8700B63C2B /* BrowserPersistenceStore.swift */; };
 		2B336D912C3D4C8800B63C2B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2B336D902C3D4C8800B63C2B /* Assets.xcassets */; };
+		2B336D942C3D51A600B63C2B /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 2B336D932C3D51A600B63C2B /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +31,7 @@
 		2B336D662C3D4C8000B63C2B /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebView.swift; sourceTree = "<group>"; };
 		2B336D6F2C3D4C8200B63C2B /* WindowAccessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowAccessor.swift; sourceTree = "<group>"; };
 		2B336D692C3D4C8000B63C2B /* Browser.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Browser.entitlements; sourceTree = "<group>"; };
+		2B336D952C3D5EA000B63C2B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		2B336D712C3D4C8300B63C2B /* BrowserWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserWindowView.swift; sourceTree = "<group>"; };
 		2B336D732C3D4C8300B63C2B /* BrowserSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSidebar.swift; sourceTree = "<group>"; };
 		2B336D752C3D4C8300B63C2B /* TrafficLightControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrafficLightControls.swift; sourceTree = "<group>"; };
@@ -49,6 +51,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2B336D942C3D51A600B63C2B /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -86,6 +89,7 @@
 				2B336D7B2C3D4C8300B63C2B /* Sidebar */,
 				2B336D7C2C3D4C8300B63C2B /* Window */,
 				2B336D902C3D4C8800B63C2B /* Assets.xcassets */,
+				2B336D952C3D5EA000B63C2B /* Info.plist */,
 				2B336D692C3D4C8000B63C2B /* Browser.entitlements */,
 			);
 			path = Browser;
@@ -134,6 +138,9 @@
 			dependencies = (
 			);
 			name = Browser;
+			packageProductDependencies = (
+				2B336D932C3D51A600B63C2B /* Sparkle */,
+			);
 			productName = Browser;
 			productReference = 2B336D582C3D4C7F00B63C2B /* Browser.app */;
 			productType = "com.apple.product-type.application";
@@ -162,6 +169,9 @@
 				Base,
 			);
 			mainGroup = 2B336D4F2C3D4C7F00B63C2B;
+			packageReferences = (
+				2B336D922C3D51A600B63C2B /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			productRefGroup = 2B336D592C3D4C7F00B63C2B /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -335,11 +345,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8H8H5W877U;
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Browser needs camera access for websites you allow.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Browser needs microphone access for websites you allow.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Browser/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -364,11 +371,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8H8H5W877U;
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Browser needs camera access for websites you allow.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Browser needs microphone access for websites you allow.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Browser/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -405,6 +409,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		2B336D922C3D51A600B63C2B /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2B336D932C3D51A600B63C2B /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2B336D922C3D51A600B63C2B /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 2B336D502C3D4C7F00B63C2B /* Project object */;
 }

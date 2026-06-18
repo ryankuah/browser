@@ -1,20 +1,33 @@
 import SwiftUI
+import Sparkle
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
+}
 
 @main
 struct BrowserApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             BrowserWindowView()
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
-            BrowserCommands()
+            BrowserCommands(updater: appDelegate.updaterController.updater)
         }
     }
 }
 
 private struct BrowserCommands: Commands {
     @FocusedValue(\.browserCommandActions) private var browserCommandActions
+    let updater: SPUUpdater
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -44,6 +57,10 @@ private struct BrowserCommands: Commands {
         }
 
         CommandGroup(after: .appInfo) {
+            Button("Check for Updates...") {
+                updater.checkForUpdates()
+            }
+
             Button("Show Console") {
                 browserCommandActions?.toggleConsole()
             }
