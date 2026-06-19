@@ -20,6 +20,13 @@ struct BrowserTabSnapshot: Sendable {
     let url: URL?
 }
 
+struct StoredBrowserProfile: Sendable {
+    let id: UUID
+    let name: String
+    let colorHex: String
+    let position: Int
+}
+
 struct StoredBrowserBookmark: Sendable {
     let id: UUID
     let position: Int
@@ -97,9 +104,70 @@ final class BrowserDatabase {
         _ = sqlite3_close(db)
     }
 
-    func loadDefaultSession() throws -> StoredBrowserSession? {
-        let selectedTabID = try loadSelectedTabID()
-        let tabs = try loadTabs()
+    func loadProfiles() throws -> [StoredBrowserProfile] {
+        try withStatement(
+            """
+            SELECT id, name, color_hex, position
+            FROM profiles
+            ORDER BY position ASC
+            """
+        ) { statement in
+            var profiles: [StoredBrowserProfile] = []
+            while try statement.step() == SQLite.row {
+                guard let rawID = statement.text(at: 0),
+                      let id = UUID(uuidString: rawID) else {
+                    continue
+                }
+
+                profiles.append(
+                    StoredBrowserProfile(
+                        id: id,
+                        name: statement.text(at: 1) ?? "Profile",
+                        colorHex: statement.text(at: 2) ?? BrowserProfile.defaultColorHex,
+                        position: Int(statement.int64(at: 3))
+                    )
+                )
+            }
+
+            return profiles
+        }
+    }
+
+    func saveProfile(_ profile: StoredBrowserProfile) throws {
+        try withStatement(
+            """
+            INSERT INTO profiles (id, name, color_hex, position, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                color_hex = excluded.color_hex,
+                position = excluded.position,
+                updated_at = excluded.updated_at
+            """
+        ) { statement in
+            let now = Date().timeIntervalSince1970
+            try statement.bind(profile.id.uuidString, at: 1)
+            try statement.bind(profile.name, at: 2)
+            try statement.bind(profile.colorHex, at: 3)
+            try statement.bind(Int64(profile.position), at: 4)
+            try statement.bind(now, at: 5)
+            try statement.bind(now, at: 6)
+            try statement.stepDone()
+        }
+    }
+
+    func loadActiveProfileID() throws -> UUID? {
+        let settings = try loadSettings()
+        guard let rawID = settings["activeProfileID"] else {
+            return nil
+        }
+
+        return UUID(uuidString: rawID)
+    }
+
+    func loadSession(profileID: UUID) throws -> StoredBrowserSession? {
+        let selectedTabID = try loadSelectedTabID(sessionID: profileID.uuidString)
+        let tabs = try loadTabs(sessionID: profileID.uuidString)
 
         guard selectedTabID != nil || !tabs.isEmpty else {
             return nil
@@ -108,9 +176,10 @@ final class BrowserDatabase {
         return StoredBrowserSession(selectedTabID: selectedTabID, tabs: tabs)
     }
 
-    func saveDefaultSession(tabs: [BrowserTabSnapshot], selectedTabID: UUID?) throws {
+    func saveSession(profileID: UUID, tabs: [BrowserTabSnapshot], selectedTabID: UUID?) throws {
         try transaction {
             let now = Date().timeIntervalSince1970
+            let sessionID = profileID.uuidString
 
             try withStatement(
                 """
@@ -121,14 +190,14 @@ final class BrowserDatabase {
                     updated_at = excluded.updated_at
                 """
             ) { statement in
-                try statement.bind(Self.defaultSessionID, at: 1)
+                try statement.bind(sessionID, at: 1)
                 try statement.bind(selectedTabID?.uuidString, at: 2)
                 try statement.bind(now, at: 3)
                 try statement.stepDone()
             }
 
             try withStatement("DELETE FROM tabs WHERE session_id = ?") { statement in
-                try statement.bind(Self.defaultSessionID, at: 1)
+                try statement.bind(sessionID, at: 1)
                 try statement.stepDone()
             }
 
@@ -140,7 +209,7 @@ final class BrowserDatabase {
                     """
                 ) { statement in
                     try statement.bind(tab.id.uuidString, at: 1)
-                    try statement.bind(Self.defaultSessionID, at: 2)
+                    try statement.bind(sessionID, at: 2)
                     try statement.bind(Int64(tab.position), at: 3)
                     try statement.bind(tab.title, at: 4)
                     try statement.bind(tab.url?.absoluteString, at: 5)
@@ -239,14 +308,17 @@ final class BrowserDatabase {
         return "\(scheme)://\(host)\(port)"
     }
 
-    func loadBookmarks() throws -> [StoredBrowserBookmark] {
+    func loadBookmarks(profileID: UUID) throws -> [StoredBrowserBookmark] {
         try withStatement(
             """
             SELECT id, position, title, url
             FROM bookmarks
+            WHERE profile_id = ?
             ORDER BY position ASC
             """
         ) { statement in
+            try statement.bind(profileID.uuidString, at: 1)
+
             var bookmarks: [StoredBrowserBookmark] = []
             while try statement.step() == SQLite.row {
                 guard let rawID = statement.text(at: 0),
@@ -270,12 +342,13 @@ final class BrowserDatabase {
         }
     }
 
-    func saveBookmark(_ bookmark: StoredBrowserBookmark) throws {
+    func saveBookmark(_ bookmark: StoredBrowserBookmark, profileID: UUID) throws {
         try withStatement(
             """
-            INSERT INTO bookmarks (id, position, title, url, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO bookmarks (id, profile_id, position, title, url, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
+                profile_id = excluded.profile_id,
                 position = excluded.position,
                 title = excluded.title,
                 url = excluded.url,
@@ -284,11 +357,12 @@ final class BrowserDatabase {
         ) { statement in
             let now = Date().timeIntervalSince1970
             try statement.bind(bookmark.id.uuidString, at: 1)
-            try statement.bind(Int64(bookmark.position), at: 2)
-            try statement.bind(bookmark.title, at: 3)
-            try statement.bind(bookmark.url.absoluteString, at: 4)
-            try statement.bind(now, at: 5)
+            try statement.bind(profileID.uuidString, at: 2)
+            try statement.bind(Int64(bookmark.position), at: 3)
+            try statement.bind(bookmark.title, at: 4)
+            try statement.bind(bookmark.url.absoluteString, at: 5)
             try statement.bind(now, at: 6)
+            try statement.bind(now, at: 7)
             try statement.stepDone()
         }
     }
@@ -612,6 +686,121 @@ final class BrowserDatabase {
                 try execute("PRAGMA user_version = 5")
             }
         }
+
+        if version < 6 {
+            try transaction {
+                try execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS profiles (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        color_hex TEXT NOT NULL,
+                        position INTEGER NOT NULL,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL
+                    )
+                    """
+                )
+
+                try execute("CREATE INDEX IF NOT EXISTS profiles_position_idx ON profiles(position)")
+
+                let legacyTabCount = try countRows(in: "tabs")
+                let legacyBookmarkCount = try countRows(in: "bookmarks")
+                let importedProfileID = UUID()
+
+                if legacyTabCount > 0 || legacyBookmarkCount > 0 {
+                    let now = Date().timeIntervalSince1970
+                    try withStatement(
+                        """
+                        INSERT INTO profiles (id, name, color_hex, position, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """
+                    ) { statement in
+                        try statement.bind(importedProfileID.uuidString, at: 1)
+                        try statement.bind("Personal", at: 2)
+                        try statement.bind(BrowserProfile.defaultColorHex, at: 3)
+                        try statement.bind(Int64(0), at: 4)
+                        try statement.bind(now, at: 5)
+                        try statement.bind(now, at: 6)
+                        try statement.stepDone()
+                    }
+
+                    try withStatement(
+                        """
+                        INSERT INTO settings (key, value, updated_at)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(key) DO UPDATE SET
+                            value = excluded.value,
+                            updated_at = excluded.updated_at
+                        """
+                    ) { statement in
+                        try statement.bind("activeProfileID", at: 1)
+                        try statement.bind(importedProfileID.uuidString, at: 2)
+                        try statement.bind(now, at: 3)
+                        try statement.stepDone()
+                    }
+
+                    try withStatement(
+                        """
+                        INSERT INTO sessions (id, selected_tab_id, updated_at)
+                        SELECT ?, selected_tab_id, updated_at
+                        FROM sessions
+                        WHERE id = ?
+                        ON CONFLICT(id) DO NOTHING
+                        """
+                    ) { statement in
+                        try statement.bind(importedProfileID.uuidString, at: 1)
+                        try statement.bind(Self.defaultSessionID, at: 2)
+                        try statement.stepDone()
+                    }
+
+                    try withStatement("UPDATE tabs SET session_id = ? WHERE session_id = ?") { statement in
+                        try statement.bind(importedProfileID.uuidString, at: 1)
+                        try statement.bind(Self.defaultSessionID, at: 2)
+                        try statement.stepDone()
+                    }
+
+                    try withStatement("DELETE FROM sessions WHERE id = ?") { statement in
+                        try statement.bind(Self.defaultSessionID, at: 1)
+                        try statement.stepDone()
+                    }
+                }
+
+                try execute(
+                    """
+                    CREATE TABLE bookmarks_v6 (
+                        id TEXT PRIMARY KEY,
+                        profile_id TEXT NOT NULL,
+                        position INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
+                        UNIQUE(profile_id, url)
+                    )
+                    """
+                )
+
+                if legacyBookmarkCount > 0 {
+                    try withStatement(
+                        """
+                        INSERT INTO bookmarks_v6 (id, profile_id, position, title, url, created_at, updated_at)
+                        SELECT id, ?, position, title, url, created_at, updated_at
+                        FROM bookmarks
+                        """
+                    ) { statement in
+                        try statement.bind(importedProfileID.uuidString, at: 1)
+                        try statement.stepDone()
+                    }
+                }
+
+                try execute("DROP TABLE bookmarks")
+                try execute("ALTER TABLE bookmarks_v6 RENAME TO bookmarks")
+                try execute("CREATE INDEX IF NOT EXISTS bookmarks_profile_position_idx ON bookmarks(profile_id, position)")
+                try execute("PRAGMA user_version = 6")
+            }
+        }
     }
 
     private func backfillHistoryVisitOrigins() throws {
@@ -650,9 +839,19 @@ final class BrowserDatabase {
         }
     }
 
-    private func loadSelectedTabID() throws -> UUID? {
+    private func countRows(in tableName: String) throws -> Int {
+        try withStatement("SELECT COUNT(*) FROM \(tableName)") { statement in
+            guard try statement.step() == SQLite.row else {
+                return 0
+            }
+
+            return Int(statement.int64(at: 0))
+        }
+    }
+
+    private func loadSelectedTabID(sessionID: String) throws -> UUID? {
         try withStatement("SELECT selected_tab_id FROM sessions WHERE id = ?") { statement in
-            try statement.bind(Self.defaultSessionID, at: 1)
+            try statement.bind(sessionID, at: 1)
 
             guard try statement.step() == SQLite.row else {
                 return nil
@@ -666,7 +865,7 @@ final class BrowserDatabase {
         }
     }
 
-    private func loadTabs() throws -> [StoredBrowserTab] {
+    private func loadTabs(sessionID: String) throws -> [StoredBrowserTab] {
         try withStatement(
             """
             SELECT id, position, title, url
@@ -675,7 +874,7 @@ final class BrowserDatabase {
             ORDER BY position ASC
             """
         ) { statement in
-            try statement.bind(Self.defaultSessionID, at: 1)
+            try statement.bind(sessionID, at: 1)
 
             var tabs: [StoredBrowserTab] = []
             while try statement.step() == SQLite.row {

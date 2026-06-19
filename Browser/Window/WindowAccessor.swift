@@ -38,7 +38,7 @@ struct WindowAccessor: NSViewRepresentable {
         }
     }
 
-    static func configureBrowserWindow(_ window: NSWindow, bezelStyle: BrowserBezelStyle) {
+    static func configureBrowserWindow(_ window: NSWindow, bezelStyle: BrowserBezelStyle, profileColor: NSColor) {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
@@ -51,9 +51,9 @@ struct WindowAccessor: NSViewRepresentable {
             window.isOpaque = false
             window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
         case .simple:
-            window.backgroundColor = .black
+            window.backgroundColor = profileColor
             window.isOpaque = true
-            window.contentView?.layer?.backgroundColor = NSColor.black.cgColor
+            window.contentView?.layer?.backgroundColor = profileColor.cgColor
         }
 
         window.standardWindowButton(.closeButton)?.isHidden = true

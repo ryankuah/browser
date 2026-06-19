@@ -42,28 +42,31 @@ struct BrowserChromeBackground: View {
     let bezelStyle: BrowserBezelStyle
     let cornerRadius: CGFloat
     let effect: Effect
+    let profileColor: NSColor?
 
     init(
         bezelStyle: BrowserBezelStyle,
         cornerRadius: CGFloat,
-        effect: Effect
+        effect: Effect,
+        profileColor: NSColor? = nil
     ) {
         self.bezelStyle = bezelStyle
         self.cornerRadius = cornerRadius
         self.effect = effect
+        self.profileColor = profileColor
     }
 
     var body: some View {
         if bezelStyle == .simple {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.black)
+                .fill(Color(nsColor: profileColor ?? .black))
         } else {
             switch effect {
             case .liquidGlass(let style, let tintColor):
                 LiquidGlassView(
                     style: style,
                     cornerRadius: cornerRadius,
-                    tintColor: tintColor
+                    tintColor: profileColor?.withAlphaComponent(0.44) ?? tintColor
                 )
             case .material:
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

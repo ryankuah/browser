@@ -2,6 +2,7 @@ import AppKit
 import AuthenticationServices
 import Foundation
 import Security
+import SwiftUI
 import WebKit
 
 @MainActor
@@ -16,6 +17,9 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     @Published private(set) var consoleMessages: [BrowserConsoleMessage] = []
     @Published private(set) var toasts: [BrowserToast] = []
     @Published var selectedTabID: BrowserTab.ID?
+    @Published private(set) var profiles: [BrowserProfile] = []
+    @Published private(set) var selectedProfileID: BrowserProfile.ID?
+    @Published private(set) var hasLoadedStartupData = false
     @Published private(set) var bezelStyle: BrowserBezelStyle = .liquidGlass
     @Published private(set) var searchEngine: BrowserSearchEngine = .google
     @Published private var mountRequestedTabIDs: Set<BrowserTab.ID> = []
@@ -37,6 +41,26 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
     var activeTab: BrowserTab? {
         tabs.first { $0.id == selectedTabID }
+    }
+
+    var selectedProfile: BrowserProfile? {
+        profiles.first { $0.id == selectedProfileID }
+    }
+
+    var isOnboardingRequired: Bool {
+        hasLoadedStartupData && profiles.isEmpty
+    }
+
+    var profileColorHex: String {
+        selectedProfile?.colorHex ?? BrowserProfile.defaultColorHex
+    }
+
+    var profileNSColor: NSColor {
+        NSColor(hexString: profileColorHex) ?? NSColor.systemBlue
+    }
+
+    var profileColor: Color {
+        Color(nsColor: profileNSColor)
     }
 
     var visibleTabs: [BrowserTab] {
@@ -453,6 +477,61 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
     }
 
+    func createProfile(name: String, colorHex: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            return
+        }
+
+        let profile = BrowserProfile(
+            id: UUID(),
+            name: trimmedName,
+            colorHex: Self.normalizedProfileColorHex(colorHex),
+            position: profiles.count
+        )
+
+        profiles.append(profile)
+        Task { [persistence] in
+            await persistence.saveProfile(StoredBrowserProfile(
+                id: profile.id,
+                name: profile.name,
+                colorHex: profile.colorHex,
+                position: profile.position
+            ))
+        }
+
+        switchProfile(id: profile.id)
+    }
+
+    func switchProfile(id: BrowserProfile.ID) {
+        guard profiles.contains(where: { $0.id == id }),
+              selectedProfileID != id else {
+            return
+        }
+
+        persistSessionImmediately()
+        sessionPersistenceTask?.cancel()
+        selectedProfileID = id
+        Task { [persistence] in
+            await persistence.setActiveProfileID(id)
+        }
+
+        isApplyingStoredState = true
+        resetProfileScopedState()
+        isApplyingStoredState = false
+
+        Task { [weak self, persistence] in
+            let profileState = await persistence.loadProfileState(profileID: id)
+            await MainActor.run {
+                guard self?.selectedProfileID == id else {
+                    return
+                }
+
+                self?.applyProfileState(bookmarks: profileState.bookmarks, session: profileState.session)
+            }
+        }
+    }
+
     func toggleActivePageMediaPermission(_ kind: BrowserMediaDeviceKind) {
         guard let originKey = activeOriginKey else {
             return
@@ -482,7 +561,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         configureWebViewConfiguration(configuration)
 
         let webView = BrowserWebView(frame: .zero, configuration: configuration)
-        webView.underPageBackgroundColor = .clear
+        webView.underPageBackgroundColor = .white
 
         let tab = makeTab(webView: webView)
         tabs.append(tab)
@@ -627,9 +706,32 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         isApplyingStoredState = true
 
         applySettings(startupData.settings)
+        profiles = startupData.profiles.map { storedProfile in
+            BrowserProfile(
+                id: storedProfile.id,
+                name: storedProfile.name,
+                colorHex: storedProfile.colorHex,
+                position: storedProfile.position
+            )
+        }
+        selectedProfileID = Self.selectedProfileID(from: profiles, storedID: startupData.activeProfileID)
         applyMediaPermissionDecisions(startupData.mediaPermissionDecisions)
         downloads = startupData.downloads
-        bookmarks = startupData.bookmarks.map { storedBookmark in
+        applyHistorySuggestions(startupData.historySuggestions)
+        if selectedProfileID != nil {
+            applyProfileState(bookmarks: startupData.bookmarks, session: startupData.session)
+        } else {
+            resetProfileScopedState()
+        }
+
+        isApplyingStoredState = false
+        hasLoadedStartupData = true
+    }
+
+    private func applyProfileState(bookmarks storedBookmarks: [StoredBrowserBookmark], session: StoredBrowserSession?) {
+        isApplyingStoredState = true
+        resetProfileScopedState()
+        bookmarks = storedBookmarks.map { storedBookmark in
             BrowserBookmark(
                 id: storedBookmark.id,
                 title: storedBookmark.title,
@@ -639,9 +741,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             )
         }
         bookmarks.forEach(loadBookmarkFaviconIfNeeded)
-        applyHistorySuggestions(startupData.historySuggestions)
-        restoreSession(startupData.session)
-
+        restoreSession(session)
         isApplyingStoredState = false
     }
 
@@ -708,6 +808,18 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
         tabs = restoredTabs
         selectedTabID = restoredTabs.contains { $0.id == session.selectedTabID } ? session.selectedTabID : restoredTabs.first?.id
+    }
+
+    private func resetProfileScopedState() {
+        bookmarkFaviconTasks.values.forEach { $0.cancel() }
+        bookmarkFaviconTasks.removeAll()
+        mountedTabIDs.removeAll()
+        pendingTabLoads.removeAll()
+        mountRequestedTabIDs = []
+        tabs = []
+        bookmarks = []
+        selectedTabID = nil
+        isElementFullscreenActive = false
     }
 
     private func makeTab(
@@ -800,6 +912,21 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
 
         return (value as? Bool) == true
+    }
+
+    private static func selectedProfileID(from profiles: [BrowserProfile], storedID: UUID?) -> UUID? {
+        if let storedID,
+           profiles.contains(where: { $0.id == storedID }) {
+            return storedID
+        }
+
+        return profiles.sorted { $0.position < $1.position }.first?.id
+    }
+
+    private static func normalizedProfileColorHex(_ rawValue: String) -> String {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefixedValue = value.hasPrefix("#") ? value : "#\(value)"
+        return NSColor(hexString: prefixedValue)?.hexString ?? BrowserProfile.defaultColorHex
     }
 
     private func appendConsoleMessage(level: String, message: String, url: String?, source: String) {
@@ -1118,10 +1245,42 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     private func persistSession() {
-        guard !isApplyingStoredState else {
+        guard !isApplyingStoredState, let selectedProfileID else {
             return
         }
 
+        let snapshot = sessionSnapshot()
+
+        sessionPersistenceTask?.cancel()
+        sessionPersistenceTask = Task { [persistence] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else {
+                return
+            }
+            await persistence.saveSession(
+                profileID: selectedProfileID,
+                tabs: snapshot.tabs,
+                selectedTabID: snapshot.selectedTabID
+            )
+        }
+    }
+
+    private func persistSessionImmediately() {
+        guard let selectedProfileID else {
+            return
+        }
+
+        let snapshot = sessionSnapshot()
+        Task { [persistence] in
+            await persistence.saveSession(
+                profileID: selectedProfileID,
+                tabs: snapshot.tabs,
+                selectedTabID: snapshot.selectedTabID
+            )
+        }
+    }
+
+    private func sessionSnapshot() -> (tabs: [BrowserTabSnapshot], selectedTabID: UUID?) {
         let sessionTabs = tabs
         let persistedSelectedTabID = sessionTabs.contains { $0.id == selectedTabID } ? selectedTabID : sessionTabs.first?.id
         let snapshots = sessionTabs.enumerated().map { index, tab in
@@ -1133,14 +1292,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             )
         }
 
-        sessionPersistenceTask?.cancel()
-        sessionPersistenceTask = Task { [persistence] in
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else {
-                return
-            }
-            await persistence.saveDefaultSession(tabs: snapshots, selectedTabID: persistedSelectedTabID)
-        }
+        return (snapshots, persistedSelectedTabID)
     }
 
     private func tabFaviconDidLoad(_ tab: BrowserTab, favicon: NSImage) {
@@ -1162,6 +1314,10 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     private func persistBookmark(_ bookmark: BrowserBookmark, position: Int) {
+        guard let selectedProfileID else {
+            return
+        }
+
         let storedBookmark = StoredBrowserBookmark(
             id: bookmark.id,
             position: position,
@@ -1169,11 +1325,15 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             url: bookmark.url
         )
         Task { [persistence] in
-            await persistence.saveBookmark(storedBookmark)
+            await persistence.saveBookmark(storedBookmark, profileID: selectedProfileID)
         }
     }
 
     private func removeBookmark(id: BrowserBookmark.ID) {
+        guard let selectedProfileID else {
+            return
+        }
+
         bookmarkFaviconTasks[id]?.cancel()
         bookmarkFaviconTasks.removeValue(forKey: id)
         bookmarks.removeAll { $0.id == id }
@@ -1187,7 +1347,11 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             )
         }
         Task { [persistence] in
-            await persistence.deleteBookmarkAndReindex(id: id, remainingBookmarks: remainingBookmarks)
+            await persistence.deleteBookmarkAndReindex(
+                id: id,
+                profileID: selectedProfileID,
+                remainingBookmarks: remainingBookmarks
+            )
         }
     }
 

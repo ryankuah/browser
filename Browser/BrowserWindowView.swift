@@ -4,6 +4,7 @@ import SwiftUI
 struct BrowserWindowView: View {
     @StateObject private var browser = BrowserState()
     @StateObject private var windowReference = WindowReference()
+    @ObservedObject var updateController: BrowserUpdateController
 
     @State private var isLeftZoneHovered = false
     @State private var isSidebarHovered = false
@@ -46,7 +47,8 @@ struct BrowserWindowView: View {
                 BrowserChromeBackground(
                     bezelStyle: browser.bezelStyle,
                     cornerRadius: shellCornerRadius,
-                    effect: .liquidGlass(style: .clear)
+                    effect: .liquidGlass(style: .clear),
+                    profileColor: browser.profileNSColor
                 )
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .allowsHitTesting(false)
@@ -67,6 +69,7 @@ struct BrowserWindowView: View {
                     if isSidebarVisible {
                         BrowserSidebar(
                             browser: browser,
+                            updateController: updateController,
                             isSettingsPresented: $isSettingsPresented,
                             window: windowReference.window
                         )
@@ -106,6 +109,13 @@ struct BrowserWindowView: View {
                     }
                 }
 
+                if !browser.isElementFullscreenActive && !browser.profiles.isEmpty {
+                    ProfileBezelSwitcher(browser: browser)
+                        .frame(width: contentInset, height: max(proxy.size.height - topChromeHeight - contentInset, 0))
+                        .offset(x: max(proxy.size.width - contentInset, 0), y: topChromeHeight)
+                        .zIndex(3)
+                }
+
                 if isNewTabPromptPresented {
                     NewTabPrompt(
                         browser: browser,
@@ -129,6 +139,13 @@ struct BrowserWindowView: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     .zIndex(2)
+                }
+
+                if browser.isOnboardingRequired {
+                    ProfileOnboardingOverlay(browser: browser)
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        .zIndex(6)
                 }
 
                 if isConsolePresented {
@@ -164,6 +181,8 @@ struct BrowserWindowView: View {
             .animation(.easeInOut(duration: 0.16), value: isSettingsPresented)
             .animation(.easeInOut(duration: 0.16), value: isConsolePresented)
             .animation(.easeInOut(duration: 0.16), value: browser.bezelStyle)
+            .animation(.easeInOut(duration: 0.16), value: browser.profileColorHex)
+            .animation(.easeInOut(duration: 0.16), value: browser.isOnboardingRequired)
             .animation(.spring(response: 0.24, dampingFraction: 0.86), value: browser.toasts)
             .animation(.easeInOut(duration: 0.16), value: browser.isElementFullscreenActive)
         }
@@ -171,7 +190,11 @@ struct BrowserWindowView: View {
         .preferredColorScheme(preferredColorScheme)
         .background(
             WindowAccessor { window in
-                WindowAccessor.configureBrowserWindow(window, bezelStyle: browser.bezelStyle)
+                WindowAccessor.configureBrowserWindow(
+                    window,
+                    bezelStyle: browser.bezelStyle,
+                    profileColor: browser.profileNSColor
+                )
                 windowReference.update(window)
             }
         )
@@ -303,6 +326,230 @@ struct BrowserWindowView: View {
 
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+private struct ProfileBezelSwitcher: View {
+    @ObservedObject var browser: BrowserState
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 3) {
+                ForEach(browser.profiles) { profile in
+                    Button {
+                        browser.switchProfile(id: profile.id)
+                    } label: {
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(Color(nsColor: NSColor(hexString: profile.colorHex) ?? .systemBlue))
+                            .frame(width: 6, height: browser.selectedProfileID == profile.id ? 44 : 32)
+                            .overlay {
+                                if browser.selectedProfileID == profile.id {
+                                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                                        .stroke(Color.white.opacity(0.95), lineWidth: 1)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .cursor(.pointingHand)
+                    .accessibilityLabel(profile.displayName)
+                    .help(profile.displayName)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+        }
+        .scrollIndicators(.hidden)
+    }
+}
+
+private struct ProfileOnboardingOverlay: View {
+    @ObservedObject var browser: BrowserState
+
+    var body: some View {
+        ZStack {
+            BrowserChromeBackground(
+                bezelStyle: browser.bezelStyle,
+                cornerRadius: 0,
+                effect: .liquidGlass(
+                    style: .regular,
+                    tintColor: NSColor.black.withAlphaComponent(0.2)
+                ),
+                profileColor: NSColor.systemBlue
+            )
+            .opacity(0.96)
+            .ignoresSafeArea()
+
+            ProfileCreationPanel(
+                title: "Create Profile",
+                defaultName: "Personal",
+                defaultColor: NSColor(hexString: BrowserProfile.defaultColorHex) ?? .systemBlue
+            ) { name, colorHex in
+                browser.createProfile(name: name, colorHex: colorHex)
+            }
+            .frame(width: 320)
+            .padding(20)
+        }
+    }
+}
+
+struct ProfileCreationPanel: View {
+    private static let presetColorHexes = [
+        "#2F80ED",
+        "#EB5757",
+        "#27AE60",
+        "#F2994A",
+        "#9B51E0",
+        "#00A3A3",
+        "#D946EF",
+        "#F2C94C"
+    ]
+
+    let title: String
+    let defaultName: String
+    let defaultColor: NSColor
+    let onCreate: (String, String) -> Void
+
+    @State private var name: String
+    @State private var selectedColor: Color
+    @State private var colorHexText: String
+
+    init(
+        title: String,
+        defaultName: String,
+        defaultColor: NSColor,
+        onCreate: @escaping (String, String) -> Void
+    ) {
+        self.title = title
+        self.defaultName = defaultName
+        self.defaultColor = defaultColor
+        self.onCreate = onCreate
+        _name = State(initialValue: defaultName)
+        _selectedColor = State(initialValue: Color(nsColor: defaultColor))
+        _colorHexText = State(initialValue: defaultColor.hexString)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Color")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.fixed(24), spacing: 7), count: 8),
+                    alignment: .leading,
+                    spacing: 7
+                ) {
+                    ForEach(Self.presetColorHexes, id: \.self) { colorHex in
+                        Button {
+                            applyColorHex(colorHex)
+                        } label: {
+                            Circle()
+                                .fill(Color(nsColor: NSColor(hexString: colorHex) ?? .systemBlue))
+                                .frame(width: 22, height: 22)
+                                .overlay {
+                                    if normalizedHexText.caseInsensitiveCompare(colorHex) == .orderedSame {
+                                        Circle()
+                                            .stroke(Color.primary.opacity(0.72), lineWidth: 2)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(colorHex)
+                        .help(colorHex)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(selectedColor)
+                        .frame(width: 28, height: 24)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .stroke(Color.primary.opacity(0.2), lineWidth: 1)
+                        }
+
+                    TextField("#RRGGBB", text: $colorHexText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            applyHexText()
+                        }
+                        .onChange(of: colorHexText) { _, newValue in
+                            guard newValue.count == 7,
+                                  let color = NSColor(hexString: newValue) else {
+                                return
+                            }
+
+                            selectedColor = Color(nsColor: color)
+                        }
+                }
+            }
+
+            Button {
+                onCreate(name, normalizedHexText)
+            } label: {
+                Text("Create")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 28)
+            }
+            .buttonStyle(.plain)
+            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .foregroundStyle(.primary)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.primary.opacity(0.12))
+            }
+        }
+        .padding(12)
+        .background {
+            BrowserChromeBackground(
+                bezelStyle: .liquidGlass,
+                cornerRadius: 10,
+                effect: .liquidGlass(
+                    style: .regular,
+                    tintColor: NSColor.white.withAlphaComponent(0.1)
+                )
+            )
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.16), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.22), radius: 24, y: 12)
+    }
+
+    private var normalizedHexText: String {
+        NSColor(hexString: colorHexText)?.hexString ?? NSColor(selectedColor).hexString
+    }
+
+    private func applyHexText() {
+        guard let color = NSColor(hexString: colorHexText) else {
+            colorHexText = NSColor(selectedColor).hexString
+            return
+        }
+
+        colorHexText = color.hexString
+        selectedColor = Color(nsColor: color)
+    }
+
+    private func applyColorHex(_ colorHex: String) {
+        guard let color = NSColor(hexString: colorHex) else {
+            return
+        }
+
+        colorHexText = color.hexString
+        selectedColor = Color(nsColor: color)
     }
 }
 

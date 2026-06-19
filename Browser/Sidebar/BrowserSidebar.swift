@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct BrowserSidebar: View {
     @ObservedObject var browser: BrowserState
+    @ObservedObject var updateController: BrowserUpdateController
     @Binding var isSettingsPresented: Bool
     let window: NSWindow?
 
@@ -25,6 +26,7 @@ struct BrowserSidebar: View {
 
             DownloadsFooter(
                 browser: browser,
+                updateController: updateController,
                 isPresented: $isDownloadsPresented,
                 isSettingsPresented: $isSettingsPresented
             )
@@ -39,7 +41,8 @@ struct BrowserSidebar: View {
                 effect: .liquidGlass(
                     style: .regular,
                     tintColor: NSColor.black.withAlphaComponent(0.06)
-                )
+                ),
+                profileColor: browser.profileNSColor
             )
             .allowsHitTesting(false)
         }
@@ -160,6 +163,7 @@ private struct SidebarTabList: View {
 
 private struct DownloadsFooter: View {
     @ObservedObject var browser: BrowserState
+    @ObservedObject var updateController: BrowserUpdateController
     @Binding var isPresented: Bool
     @Binding var isSettingsPresented: Bool
 
@@ -187,6 +191,17 @@ private struct DownloadsFooter: View {
 
             HStack {
                 Spacer()
+
+                if updateController.isUpdateButtonVisible {
+                    SidebarIconButton(
+                        systemName: updateController.updateButtonIconSystemName,
+                        label: updateController.updateButtonHelp
+                    ) {
+                        updateController.performUpdateButtonAction()
+                    }
+                    .disabled(updateController.state == .downloading || updateController.state == .extracting || updateController.state == .installing)
+                    .transition(.scale(scale: 0.82).combined(with: .opacity))
+                }
 
                 DownloadsIconButton(
                     activeDownloadCount: activeDownloadCount,
@@ -257,6 +272,8 @@ private struct BrowserSettingsPanel: View {
     @ObservedObject var browser: BrowserState
     let bezelStyle: BrowserBezelStyle
 
+    @State private var isAddingProfile = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -273,6 +290,69 @@ private struct BrowserSettingsPanel: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 SettingsRow(title: "Downloads", value: browser.downloadsDirectoryDisplayPath)
+
+                Divider()
+                    .opacity(0.38)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Text("Profiles")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.14)) {
+                                isAddingProfile.toggle()
+                            }
+                        } label: {
+                            Image(systemName: isAddingProfile ? "minus" : "plus")
+                                .font(.system(size: 11, weight: .bold))
+                                .frame(width: 24, height: 22)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(isAddingProfile ? "Cancel Profile" : "Add Profile")
+                        .help(isAddingProfile ? "Cancel" : "Add Profile")
+                    }
+
+                    if isAddingProfile {
+                        ProfileCreationPanel(
+                            title: "New Profile",
+                            defaultName: "",
+                            defaultColor: NSColor(hexString: BrowserProfile.defaultColorHex) ?? .systemBlue
+                        ) { name, colorHex in
+                            browser.createProfile(name: name, colorHex: colorHex)
+                            withAnimation(.easeInOut(duration: 0.14)) {
+                                isAddingProfile = false
+                            }
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
+                    HStack(spacing: 6) {
+                        ForEach(browser.profiles) { profile in
+                            Button {
+                                browser.switchProfile(id: profile.id)
+                            } label: {
+                                Circle()
+                                    .fill(Color(nsColor: NSColor(hexString: profile.colorHex) ?? .systemBlue))
+                                    .frame(width: 18, height: 18)
+                                    .overlay {
+                                        if browser.selectedProfileID == profile.id {
+                                            Circle()
+                                                .stroke(Color.primary.opacity(0.7), lineWidth: 2)
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(profile.displayName)
+                            .help(profile.displayName)
+                        }
+                    }
+                }
 
                 Divider()
                     .opacity(0.38)

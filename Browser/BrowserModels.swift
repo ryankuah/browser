@@ -124,6 +124,19 @@ struct BrowserBookmark: Identifiable, Equatable {
     }
 }
 
+struct BrowserProfile: Identifiable, Equatable, Sendable {
+    let id: UUID
+    var name: String
+    var colorHex: String
+    var position: Int
+
+    static let defaultColorHex = "#2F80ED"
+
+    var displayName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "Profile"
+    }
+}
+
 struct BrowserHistorySuggestion: Identifiable, Equatable {
     var id: String { url.absoluteString }
 
@@ -218,6 +231,35 @@ struct BrowserToast: Identifiable, Equatable {
     var status: BrowserToastStatus
     var progressFraction: Double?
     var downloadID: BrowserDownload.ID?
+}
+
+extension NSColor {
+    convenience init?(hexString: String) {
+        var value = hexString.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if value.hasPrefix("#") {
+            value.removeFirst()
+        }
+
+        guard value.count == 6,
+              let integer = UInt32(value, radix: 16) else {
+            return nil
+        }
+
+        self.init(
+            calibratedRed: CGFloat((integer >> 16) & 0xFF) / 255,
+            green: CGFloat((integer >> 8) & 0xFF) / 255,
+            blue: CGFloat(integer & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+
+    var hexString: String {
+        let color = usingColorSpace(.sRGB) ?? self
+        let red = Int(round(max(0, min(1, color.redComponent)) * 255))
+        let green = Int(round(max(0, min(1, color.greenComponent)) * 255))
+        let blue = Int(round(max(0, min(1, color.blueComponent)) * 255))
+        return String(format: "#%02X%02X%02X", red, green, blue)
+    }
 }
 
 enum OriginSecurityState {
