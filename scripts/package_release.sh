@@ -8,11 +8,21 @@ CONFIGURATION="Release"
 DERIVED_DATA="$ROOT_DIR/build/DerivedData"
 RELEASE_DIR="$ROOT_DIR/build/release"
 DMG_STAGING_DIR="$ROOT_DIR/build/dmg-staging"
+DMG_VERIFY_MOUNT_DIR="$ROOT_DIR/build/dmg-verify-mount"
 SPARKLE_SIGN_UPDATE="${SPARKLE_SIGN_UPDATE:-$ROOT_DIR/build/sparkle-tools/bin/sign_update}"
 REPO_URL="${REPO_URL:-https://github.com/ryankuah/browser}"
 NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-}"
 NOTARIZE="${NOTARIZE:-1}"
 DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-}"
+ATTACHED_DMG_DEVICE=""
+
+cleanup() {
+  if [[ -n "$ATTACHED_DMG_DEVICE" ]]; then
+    hdiutil detach "$ATTACHED_DMG_DEVICE" -quiet || true
+  fi
+  rm -rf "$DMG_VERIFY_MOUNT_DIR"
+}
+trap cleanup EXIT
 
 mkdir -p "$RELEASE_DIR"
 
@@ -71,6 +81,19 @@ DMG_PATH="$RELEASE_DIR/$DMG_NAME"
 APPCAST_PATH="$RELEASE_DIR/appcast.xml"
 SPARKLE_FRAMEWORK="$APP_PATH/Contents/Frameworks/Sparkle.framework"
 
+verify_app_signature() {
+  local app_path="$1"
+
+  codesign --verify --deep --strict --verbose=2 "$app_path"
+}
+
+verify_app_for_distribution() {
+  local app_path="$1"
+
+  verify_app_signature "$app_path"
+  spctl --assess --type execute --verbose=4 "$app_path"
+}
+
 xcodebuild \
   -project "$PROJECT" \
   -scheme "$SCHEME" \
@@ -93,13 +116,14 @@ if [[ -d "$SPARKLE_FRAMEWORK" ]]; then
   codesign --force --sign "$DEVELOPER_ID_APPLICATION" --options runtime --timestamp "$SPARKLE_FRAMEWORK"
 fi
 
+xattr -cr "$APP_PATH"
 codesign --force \
   --sign "$DEVELOPER_ID_APPLICATION" \
   --options runtime \
   --timestamp \
   --entitlements "$ROOT_DIR/Browser/Browser.entitlements" \
   "$APP_PATH"
-codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+verify_app_signature "$APP_PATH"
 
 rm -f "$DMG_PATH"
 rm -rf "$DMG_STAGING_DIR"
@@ -123,6 +147,19 @@ if [[ "$NOTARIZE" != "0" ]]; then
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"
   spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_PATH"
+
+  rm -rf "$DMG_VERIFY_MOUNT_DIR"
+  mkdir -p "$DMG_VERIFY_MOUNT_DIR"
+  hdiutil attach "$DMG_PATH" \
+    -readonly \
+    -nobrowse \
+    -mountpoint "$DMG_VERIFY_MOUNT_DIR" \
+    >/dev/null
+  ATTACHED_DMG_DEVICE="$DMG_VERIFY_MOUNT_DIR"
+  verify_app_for_distribution "$DMG_VERIFY_MOUNT_DIR/Browser.app"
+  hdiutil detach "$ATTACHED_DMG_DEVICE" -quiet
+  ATTACHED_DMG_DEVICE=""
+  rmdir "$DMG_VERIFY_MOUNT_DIR"
 else
   echo "Skipping notarization and Gatekeeper distribution assessment because NOTARIZE=0." >&2
 fi
