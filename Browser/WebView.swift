@@ -4,25 +4,25 @@ import WebKit
 struct WebView: NSViewRepresentable {
     let webView: BrowserWebView?
     let cornerRadius: CGFloat
-    let blockedHitTestWidth: CGFloat
+    let occlusionRects: [CGRect]
     let onMount: (() -> Void)?
 
     init(
         webView: BrowserWebView?,
         cornerRadius: CGFloat = 0,
-        blockedHitTestWidth: CGFloat = 0,
+        occlusionRects: [CGRect] = [],
         onMount: (() -> Void)? = nil
     ) {
         self.webView = webView
         self.cornerRadius = cornerRadius
-        self.blockedHitTestWidth = blockedHitTestWidth
+        self.occlusionRects = occlusionRects
         self.onMount = onMount
     }
 
     func makeNSView(context: Context) -> BrowserWebContainerView {
         let containerView = BrowserWebContainerView()
         containerView.cornerRadius = cornerRadius
-        containerView.blockedHitTestWidth = blockedHitTestWidth
+        containerView.occlusionRects = occlusionRects
         containerView.onWebViewMounted = onMount
         containerView.setWebView(webView)
         return containerView
@@ -30,7 +30,7 @@ struct WebView: NSViewRepresentable {
 
     func updateNSView(_ nsView: BrowserWebContainerView, context: Context) {
         nsView.cornerRadius = cornerRadius
-        nsView.blockedHitTestWidth = blockedHitTestWidth
+        nsView.occlusionRects = occlusionRects
         nsView.onWebViewMounted = onMount
         nsView.setWebView(webView)
     }
@@ -42,9 +42,9 @@ final class BrowserWebContainerView: NSView {
     private var isMountNotificationPending = false
 
     var onWebViewMounted: (() -> Void)?
-    var blockedHitTestWidth: CGFloat = 0 {
+    var occlusionRects: [CGRect] = [] {
         didSet {
-            hostedWebView?.blockedHitTestWidth = blockedHitTestWidth
+            hostedWebView?.occlusionRects = occlusionRects
             window?.invalidateCursorRects(for: self)
             hostedWebView.map { window?.invalidateCursorRects(for: $0) }
         }
@@ -62,6 +62,7 @@ final class BrowserWebContainerView: NSView {
         wantsLayer = true
         layer?.masksToBounds = true
         layer?.cornerCurve = .continuous
+        layer?.backgroundColor = NSColor.white.cgColor
     }
 
     @available(*, unavailable)
@@ -85,7 +86,7 @@ final class BrowserWebContainerView: NSView {
         }
 
         webView.removeFromSuperview()
-        webView.blockedHitTestWidth = blockedHitTestWidth
+        webView.occlusionRects = occlusionRects
         if bounds.width > 1, bounds.height > 1 {
             webView.frame = bounds
         }
@@ -117,7 +118,7 @@ final class BrowserWebContainerView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        if point.x >= 0, point.x < blockedHitTestWidth {
+        if isPointOccluded(point) {
             return nil
         }
 
@@ -159,6 +160,10 @@ final class BrowserWebContainerView: NSView {
 
         window?.makeFirstResponder(hostedWebView)
     }
+
+    private func isPointOccluded(_ point: NSPoint) -> Bool {
+        occlusionRects.contains { $0.contains(point) }
+    }
 }
 
 final class BrowserWebView: WKWebView {
@@ -167,7 +172,7 @@ final class BrowserWebView: WKWebView {
     static let safariUserAgentSuffix = "Version/18.0 Safari/605.1.15"
     private var isPointerShieldUpdatePending = false
 
-    var blockedHitTestWidth: CGFloat = 0 {
+    var occlusionRects: [CGRect] = [] {
         didSet {
             window?.invalidateCursorRects(for: self)
             updatePointerShield()
@@ -187,7 +192,7 @@ final class BrowserWebView: WKWebView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        if isPointInBlockedRegion(point) {
+        if isPointOccluded(point) {
             return nil
         }
 
@@ -207,7 +212,7 @@ final class BrowserWebView: WKWebView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        if isEventInBlockedRegion(event) {
+        if isEventInOccludedRegion(event) {
             updatePointerShield()
             return
         }
@@ -216,7 +221,7 @@ final class BrowserWebView: WKWebView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        if isEventInBlockedRegion(event) {
+        if isEventInOccludedRegion(event) {
             return
         }
 
@@ -224,7 +229,7 @@ final class BrowserWebView: WKWebView {
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        if isEventInBlockedRegion(event) {
+        if isEventInOccludedRegion(event) {
             updatePointerShield()
             return
         }
@@ -265,15 +270,12 @@ final class BrowserWebView: WKWebView {
         ))
     }
 
-    private func isEventInBlockedRegion(_ event: NSEvent) -> Bool {
-        isPointInBlockedRegion(convert(event.locationInWindow, from: nil))
+    private func isEventInOccludedRegion(_ event: NSEvent) -> Bool {
+        isPointOccluded(convert(event.locationInWindow, from: nil))
     }
 
-    private func isPointInBlockedRegion(_ point: NSPoint) -> Bool {
-        blockedHitTestWidth > 0
-            && point.x >= 0
-            && point.x < blockedHitTestWidth
-            && bounds.contains(point)
+    private func isPointOccluded(_ point: NSPoint) -> Bool {
+        bounds.contains(point) && occlusionRects.contains { $0.contains(point) }
     }
 
     private func shouldHandleAsWebContentKey(_ event: NSEvent) -> Bool {
@@ -293,7 +295,7 @@ final class BrowserWebView: WKWebView {
         }
 
         isPointerShieldUpdatePending = true
-        let width = max(blockedHitTestWidth, 0)
+        let rects = normalizedOcclusionRects()
 
         DispatchQueue.main.async { [weak self] in
             guard let self else {
@@ -301,48 +303,95 @@ final class BrowserWebView: WKWebView {
             }
 
             self.isPointerShieldUpdatePending = false
-            self.evaluateJavaScript(Self.pointerShieldScript(width: width), completionHandler: nil)
+            self.evaluateJavaScript(Self.pointerShieldScript(rects: rects), completionHandler: nil)
         }
     }
 
-    private static func pointerShieldScript(width: CGFloat) -> String {
-        let width = max(width, 0)
+    private func normalizedOcclusionRects() -> [CGRect] {
+        occlusionRects.compactMap { rect in
+            let intersection = rect.intersection(bounds)
+            guard !intersection.isNull,
+                  intersection.width > 0,
+                  intersection.height > 0 else {
+                return nil
+            }
+
+            return intersection
+        }
+    }
+
+    private static func pointerShieldScript(rects: [CGRect]) -> String {
+        let rectJSON = rects.map { rect in
+            """
+            {"left":\(String(format: "%.2f", rect.minX)),"top":\(String(format: "%.2f", rect.minY)),"width":\(String(format: "%.2f", rect.width)),"height":\(String(format: "%.2f", rect.height))}
+            """
+        }
+            .joined(separator: ",")
 
         return #"""
         (() => {
-          const id = "__browserSidebarPointerShield";
-          let shield = document.getElementById(id);
+          const rootId = "__browserPointerShields";
+          const rects = [RECTS];
+          let root = document.getElementById(rootId);
 
-          if (!shield) {
-            shield = document.createElement("div");
-            shield.id = id;
-            shield.setAttribute("aria-hidden", "true");
-            shield.addEventListener("contextmenu", event => event.preventDefault(), true);
-            for (const name of ["click", "dblclick", "mousedown", "mouseup", "mousemove", "mouseover", "mouseout", "pointerdown", "pointerup", "pointermove", "pointerover", "pointerout"]) {
-              shield.addEventListener(name, event => event.stopPropagation(), true);
-            }
-            (document.documentElement || document.body).appendChild(shield);
+          if (!root) {
+            root = document.createElement("div");
+            root.id = rootId;
+            root.setAttribute("aria-hidden", "true");
+            Object.assign(root.style, {
+              position: "fixed",
+              left: "0",
+              top: "0",
+              width: "0",
+              height: "0",
+              zIndex: "2147483647",
+              pointerEvents: "none"
+            });
+            (document.documentElement || document.body).appendChild(root);
           }
 
-          if (WIDTH <= 0) {
-            shield.remove();
+          if (rects.length === 0) {
+            root.remove();
             return;
           }
 
-          Object.assign(shield.style, {
-            position: "fixed",
-            left: "0",
-            top: "0",
-            width: `${WIDTH}px`,
-            height: "100vh",
-            zIndex: "2147483647",
-            background: "transparent",
-            cursor: "auto",
-            pointerEvents: "auto"
+          while (root.children.length > rects.length) {
+            root.lastChild.remove();
+          }
+
+          const block = event => {
+            event.preventDefault();
+            event.stopPropagation();
+          };
+          const stop = event => event.stopPropagation();
+          const eventNames = ["click", "dblclick", "mousedown", "mouseup", "mousemove", "mouseover", "mouseout", "pointerdown", "pointerup", "pointermove", "pointerover", "pointerout"];
+
+          rects.forEach((rect, index) => {
+            let shield = root.children[index];
+            if (!shield) {
+              shield = document.createElement("div");
+              shield.addEventListener("contextmenu", block, true);
+              for (const name of eventNames) {
+                shield.addEventListener(name, stop, true);
+              }
+              root.appendChild(shield);
+            }
+
+            Object.assign(shield.style, {
+              position: "fixed",
+              left: `${rect.left}px`,
+              top: `${rect.top}px`,
+              width: `${rect.width}px`,
+              height: `${rect.height}px`,
+              zIndex: "2147483647",
+              background: "transparent",
+              cursor: "auto",
+              pointerEvents: "auto"
+            });
           });
         })();
         """#
-            .replacingOccurrences(of: "WIDTH", with: String(format: "%.2f", width))
+            .replacingOccurrences(of: "RECTS", with: rectJSON)
     }
 
     private static let consoleBridgeScript = #"""

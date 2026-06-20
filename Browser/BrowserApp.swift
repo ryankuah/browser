@@ -217,6 +217,12 @@ private struct BrowserCommands: Commands {
             .keyboardShortcut("t", modifiers: [.command])
             .disabled(browserCommandActions == nil)
 
+            Button("Reopen Closed Tab") {
+                browserCommandActions?.reopenClosedTab()
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .disabled(browserCommandActions == nil)
+
             Button("Close Tab") {
                 browserCommandActions?.closeTab()
             }
@@ -247,15 +253,58 @@ private struct BrowserCommands: Commands {
             .keyboardShortcut("j", modifiers: [.command, .option])
             .disabled(browserCommandActions == nil)
         }
+
+#if DEBUG
+        CommandMenu("Debug") {
+            Button("Show Download Toast") {
+                browserCommandActions?.showDebugDownloadToast()
+            }
+            .disabled(browserCommandActions == nil)
+
+            Button("Show Microphone Toast") {
+                browserCommandActions?.showDebugMicrophonePermissionToast()
+            }
+            .disabled(browserCommandActions == nil)
+
+            Button("Show Video Toast") {
+                browserCommandActions?.showDebugVideoPermissionToast()
+            }
+            .disabled(browserCommandActions == nil)
+
+            Divider()
+
+            Button("Show JavaScript Alert") {
+                browserCommandActions?.showDebugJavaScriptAlert()
+            }
+            .disabled(browserCommandActions == nil)
+
+            Button("Show JavaScript Confirm") {
+                browserCommandActions?.showDebugJavaScriptConfirm()
+            }
+            .disabled(browserCommandActions == nil)
+
+            Button("Show JavaScript Prompt") {
+                browserCommandActions?.showDebugJavaScriptPrompt()
+            }
+            .disabled(browserCommandActions == nil)
+        }
+#endif
     }
 }
 
 struct BrowserCommandActions {
     var newTab: () -> Void
+    var reopenClosedTab: () -> Void
     var closeTab: () -> Void
     var copyPageLink: () -> Void
     var reload: () -> Void
     var toggleConsole: () -> Void
+    var showDebugDownloadToast: () -> Void
+    var showDebugMicrophonePermissionToast: () -> Void
+    var showDebugVideoPermissionToast: () -> Void
+    var showDebugJavaScriptAlert: () -> Void
+    var showDebugJavaScriptConfirm: () -> Void
+    var showDebugJavaScriptPrompt: () -> Void
 }
 
 private struct BrowserCommandActionsKey: FocusedValueKey {

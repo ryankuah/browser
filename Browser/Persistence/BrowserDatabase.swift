@@ -156,6 +156,33 @@ final class BrowserDatabase {
         }
     }
 
+    func deleteProfileAndReindex(id: UUID, activeProfileID: UUID?, remainingProfiles: [StoredBrowserProfile]) throws {
+        try transaction {
+            try withStatement("DELETE FROM profiles WHERE id = ?") { statement in
+                try statement.bind(id.uuidString, at: 1)
+                try statement.stepDone()
+            }
+
+            try withStatement("DELETE FROM sessions WHERE id = ?") { statement in
+                try statement.bind(id.uuidString, at: 1)
+                try statement.stepDone()
+            }
+
+            for profile in remainingProfiles {
+                try saveProfile(profile)
+            }
+
+            if let activeProfileID {
+                try saveSetting(key: "activeProfileID", value: activeProfileID.uuidString)
+            } else {
+                try withStatement("DELETE FROM settings WHERE key = ?") { statement in
+                    try statement.bind("activeProfileID", at: 1)
+                    try statement.stepDone()
+                }
+            }
+        }
+    }
+
     func loadActiveProfileID() throws -> UUID? {
         let settings = try loadSettings()
         guard let rawID = settings["activeProfileID"] else {

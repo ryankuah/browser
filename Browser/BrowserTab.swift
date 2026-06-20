@@ -59,7 +59,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         self.url = url
 
         webView.navigationDelegate = self
-        webView.underPageBackgroundColor = .clear
+        webView.underPageBackgroundColor = .white
         fullscreenObservation = webView.observe(\.fullscreenState, options: [.new]) { [weak self] _, _ in
             Task { @MainActor in
                 guard let self else {

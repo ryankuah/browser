@@ -82,6 +82,7 @@ struct BrowserDownload: Identifiable, Equatable, Sendable {
     var suggestedFilename: String
     var receivedBytes: Int64
     var expectedBytes: Int64?
+    var speedBytesPerSecond: Int64? = nil
     var startedAt: Date
     var finishedAt: Date?
     var status: BrowserDownloadStatus
@@ -105,10 +106,44 @@ struct BrowserDownload: Identifiable, Equatable, Sendable {
         }
 
         if status == .inProgress {
-            return "Downloading"
+            return inProgressDetailText
+        }
+
+        if receivedBytes > 0 {
+            return "\(Self.formattedBytes(receivedBytes)) • \(destinationURL?.deletingLastPathComponent().path ?? status.label)"
         }
 
         return destinationURL?.deletingLastPathComponent().path ?? status.label
+    }
+
+    private var inProgressDetailText: String {
+        var components: [String] = []
+
+        if let expectedBytes, expectedBytes > 0 {
+            components.append("\(Self.formattedBytes(receivedBytes)) of \(Self.formattedBytes(expectedBytes))")
+            if let progressFraction {
+                components.append(Self.formattedPercent(progressFraction))
+            }
+        } else if receivedBytes > 0 {
+            components.append(Self.formattedBytes(receivedBytes))
+        } else {
+            components.append("Downloading")
+        }
+
+        if let speedBytesPerSecond, speedBytesPerSecond > 0 {
+            components.append("\(Self.formattedBytes(speedBytesPerSecond))/s")
+        }
+
+        return components.joined(separator: " • ")
+    }
+
+    private static func formattedBytes(_ byteCount: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)
+    }
+
+    private static func formattedPercent(_ fraction: Double) -> String {
+        let percent = Int((fraction * 100).rounded())
+        return "\(percent)%"
     }
 }
 
@@ -131,6 +166,26 @@ struct BrowserProfile: Identifiable, Equatable, Sendable {
     var position: Int
 
     static let defaultColorHex = "#2F80ED"
+    static let lightPresetColorHexes = [
+        "#F8FAFC",
+        "#FDE68A",
+        "#BFDBFE",
+        "#BBF7D0",
+        "#FBCFE8",
+        "#FED7AA",
+        "#DDD6FE",
+        "#CCFBF1"
+    ]
+    static let darkPresetColorHexes = [
+        "#111827",
+        "#2F80ED",
+        "#047857",
+        "#B91C1C",
+        "#6D28D9",
+        "#0F766E",
+        "#A16207",
+        "#BE185D"
+    ]
 
     var displayName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "Profile"
@@ -259,6 +314,20 @@ extension NSColor {
         let green = Int(round(max(0, min(1, color.greenComponent)) * 255))
         let blue = Int(round(max(0, min(1, color.blueComponent)) * 255))
         return String(format: "#%02X%02X%02X", red, green, blue)
+    }
+
+    var prefersDarkForeground: Bool {
+        let color = usingColorSpace(.sRGB) ?? self
+        func linearized(_ component: CGFloat) -> CGFloat {
+            component <= 0.03928
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+
+        let luminance = (0.2126 * linearized(color.redComponent))
+            + (0.7152 * linearized(color.greenComponent))
+            + (0.0722 * linearized(color.blueComponent))
+        return luminance > 0.56
     }
 }
 

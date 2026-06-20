@@ -95,6 +95,20 @@ actor BrowserPersistenceStore {
         }
     }
 
+    func deleteProfileAndReindex(id: UUID, activeProfileID: UUID?, remainingProfiles: [StoredBrowserProfile]) {
+        guard let database = databaseIfAvailable() else {
+            return
+        }
+
+        save("Browser profile delete failed") {
+            try database.deleteProfileAndReindex(
+                id: id,
+                activeProfileID: activeProfileID,
+                remainingProfiles: remainingProfiles
+            )
+        }
+    }
+
     func setActiveProfileID(_ id: UUID) {
         saveSetting(key: "activeProfileID", value: id.uuidString)
     }

@@ -4,15 +4,32 @@ import SwiftUI
 struct LiquidGlassView: NSViewRepresentable {
     let style: NSGlassEffectView.Style
     let cornerRadius: CGFloat
+    let maskedCorners: CACornerMask
     let tintColor: NSColor?
+
+    private var usesAllCorners: Bool {
+        maskedCorners == [
+            .layerMinXMinYCorner,
+            .layerMaxXMinYCorner,
+            .layerMinXMaxYCorner,
+            .layerMaxXMaxYCorner
+        ]
+    }
 
     init(
         style: NSGlassEffectView.Style = .clear,
         cornerRadius: CGFloat,
+        maskedCorners: CACornerMask = [
+            .layerMinXMinYCorner,
+            .layerMaxXMinYCorner,
+            .layerMinXMaxYCorner,
+            .layerMaxXMaxYCorner
+        ],
         tintColor: NSColor? = nil
     ) {
         self.style = style
         self.cornerRadius = cornerRadius
+        self.maskedCorners = maskedCorners
         self.tintColor = tintColor
     }
 
@@ -27,9 +44,14 @@ struct LiquidGlassView: NSViewRepresentable {
     }
 
     private func configure(_ view: NSGlassEffectView) {
+        view.wantsLayer = true
         view.style = style
-        view.cornerRadius = cornerRadius
+        view.cornerRadius = usesAllCorners ? cornerRadius : 0
         view.tintColor = tintColor
+        view.layer?.cornerRadius = cornerRadius
+        view.layer?.cornerCurve = .continuous
+        view.layer?.maskedCorners = maskedCorners
+        view.layer?.masksToBounds = true
     }
 }
 
@@ -41,36 +63,56 @@ struct BrowserChromeBackground: View {
 
     let bezelStyle: BrowserBezelStyle
     let cornerRadius: CGFloat
+    let maskedCorners: CACornerMask
     let effect: Effect
     let profileColor: NSColor?
+    let profileTintAlpha: CGFloat
+    let simpleFillOpacity: Double
 
     init(
         bezelStyle: BrowserBezelStyle,
         cornerRadius: CGFloat,
+        maskedCorners: CACornerMask = [
+            .layerMinXMinYCorner,
+            .layerMaxXMinYCorner,
+            .layerMinXMaxYCorner,
+            .layerMaxXMaxYCorner
+        ],
         effect: Effect,
-        profileColor: NSColor? = nil
+        profileColor: NSColor? = nil,
+        profileTintAlpha: CGFloat = 0.44,
+        simpleFillOpacity: Double = 1
     ) {
         self.bezelStyle = bezelStyle
         self.cornerRadius = cornerRadius
+        self.maskedCorners = maskedCorners
         self.effect = effect
         self.profileColor = profileColor
+        self.profileTintAlpha = profileTintAlpha
+        self.simpleFillOpacity = simpleFillOpacity
     }
 
     var body: some View {
         if bezelStyle == .simple {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(Color(nsColor: profileColor ?? .black))
+                .opacity(simpleFillOpacity)
         } else {
             switch effect {
             case .liquidGlass(let style, let tintColor):
                 LiquidGlassView(
                     style: style,
                     cornerRadius: cornerRadius,
-                    tintColor: profileColor?.withAlphaComponent(0.44) ?? tintColor
+                    maskedCorners: maskedCorners,
+                    tintColor: profileColor?.withAlphaComponent(profileTintAlpha) ?? tintColor
                 )
             case .material:
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.regularMaterial)
+                    .fill(Color(nsColor: profileColor ?? .windowBackgroundColor))
+                    .background {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(.regularMaterial)
+                    }
             }
         }
     }

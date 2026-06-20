@@ -1,5 +1,4 @@
 import AppKit
-import AuthenticationServices
 import Foundation
 import Security
 import SwiftUI
@@ -8,7 +7,7 @@ import WebKit
 @MainActor
 final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDelegate {
     private static let consoleMessageLimit = 500
-    private static let passkeyEntitlement = "com.apple.developer.web-browser.public-key-credential"
+    private static let recentlyClosedTabLimit = 20
 
     @Published private(set) var tabs: [BrowserTab] = []
     @Published private(set) var bookmarks: [BrowserBookmark] = []
@@ -32,11 +31,14 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     private var mountedTabIDs: Set<BrowserTab.ID> = []
     private var pendingTabLoads: [BrowserTab.ID: URL] = [:]
     private var bookmarkFaviconTasks: [BrowserBookmark.ID: Task<Void, Never>] = [:]
+    private var activeDownloads: [BrowserDownload.ID: WKDownload] = [:]
+    private var activeDownloadProgressObservations: [BrowserDownload.ID: [NSKeyValueObservation]] = [:]
+    private var activeDownloadProgressSnapshots: [BrowserDownload.ID: (receivedBytes: Int64, date: Date)] = [:]
     private var downloadIDsByDownload: [ObjectIdentifier: BrowserDownload.ID] = [:]
     private var toastIDsByDownloadID: [BrowserDownload.ID: BrowserToast.ID] = [:]
     private var mediaPermissionRequests: [BrowserToast.ID: BrowserMediaPermissionRequest] = [:]
     private var toastDismissalTasks: [BrowserToast.ID: Task<Void, Never>] = [:]
-    private let passkeyCredentialManager = ASAuthorizationWebBrowserPublicKeyCredentialManager()
+    private var recentlyClosedTabs: [RecentlyClosedTab] = []
     private var isApplyingStoredState = false
 
     var activeTab: BrowserTab? {
@@ -61,6 +63,10 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
     var profileColor: Color {
         Color(nsColor: profileNSColor)
+    }
+
+    var profilePrefersDarkForeground: Bool {
+        profileNSColor.prefersDarkForeground
     }
 
     var visibleTabs: [BrowserTab] {
@@ -99,9 +105,17 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         return path
     }
 
+    func openDownloadsFolder() {
+        NSWorkspace.shared.activateFileViewerSelecting([Self.downloadsDirectory])
+    }
+
+    func copyDownloadsDirectoryPath() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(Self.downloadsDirectory.path, forType: .string)
+    }
+
     override init() {
         super.init()
-        requestPasskeyAccessIfNeeded()
         loadPersistedState()
     }
 
@@ -138,6 +152,8 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             return
         }
 
+        rememberClosedTab(tabs[index], position: index)
+
         let wasSelected = selectedTabID == id
         mountRequestedTabIDs.remove(id)
         mountedTabIDs.remove(id)
@@ -160,6 +176,23 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
 
         closeTab(id: activeTab.id)
+    }
+
+    func reopenLastClosedTab() {
+        guard let closedTab = recentlyClosedTabs.popLast() else {
+            return
+        }
+
+        let tab = makeTab(title: closedTab.title, url: closedTab.url)
+        let insertionIndex = min(closedTab.position, tabs.count)
+        tabs.insert(tab, at: insertionIndex)
+        selectedTabID = tab.id
+
+        if let url = closedTab.url {
+            load(url, in: tab)
+        }
+
+        persistSession()
     }
 
     func copyActivePageLink() {
@@ -224,8 +257,12 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     func loadAddress(_ address: String) {
+        _ = navigateAddress(address)
+    }
+
+    func navigateAddress(_ address: String) -> Bool {
         guard let url = BrowserNavigation.url(from: address, searchEngine: searchEngine) else {
-            return
+            return false
         }
 
         if let activeTab {
@@ -233,6 +270,8 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         } else {
             newTab(url: url)
         }
+
+        return true
     }
 
     func openNewTab(from address: String) -> Bool {
@@ -438,6 +477,34 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         NSWorkspace.shared.open(destinationURL)
     }
 
+    func showDownloadInFinder(_ download: BrowserDownload) {
+        guard let destinationURL = download.destinationURL else {
+            return
+        }
+
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([destinationURL])
+        } else {
+            NSWorkspace.shared.open(destinationURL.deletingLastPathComponent())
+        }
+    }
+
+    func copyDownloadFilePath(_ download: BrowserDownload) {
+        guard let destinationURL = download.destinationURL else {
+            return
+        }
+
+        copyToPasteboard(destinationURL.path)
+    }
+
+    func copyDownloadSourceURL(_ download: BrowserDownload) {
+        guard let sourceURL = download.sourceURL else {
+            return
+        }
+
+        copyToPasteboard(sourceURL.absoluteString)
+    }
+
     func openDownloadedFile(id: BrowserDownload.ID) {
         guard let download = downloads.first(where: { $0.id == id }) else {
             return
@@ -503,6 +570,85 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         switchProfile(id: profile.id)
     }
 
+    func updateProfile(id: BrowserProfile.ID, name: String, colorHex: String) {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            return
+        }
+
+        profiles[index].name = trimmedName
+        profiles[index].colorHex = Self.normalizedProfileColorHex(colorHex)
+        let profile = profiles[index]
+
+        Task { [persistence] in
+            await persistence.saveProfile(StoredBrowserProfile(
+                id: profile.id,
+                name: profile.name,
+                colorHex: profile.colorHex,
+                position: profile.position
+            ))
+        }
+    }
+
+    func deleteProfile(id: BrowserProfile.ID) {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        let wasSelectedProfile = selectedProfileID == id
+        if wasSelectedProfile {
+            persistSessionImmediately()
+            sessionPersistenceTask?.cancel()
+        }
+
+        profiles.remove(at: index)
+        for profileIndex in profiles.indices {
+            profiles[profileIndex].position = profileIndex
+        }
+
+        let nextSelectedProfileID = Self.selectedProfileID(from: profiles, storedID: selectedProfileID == id ? nil : selectedProfileID)
+        let remainingProfiles = profiles
+
+        if wasSelectedProfile {
+            selectedProfileID = nextSelectedProfileID
+            isApplyingStoredState = true
+            resetProfileScopedState()
+            isApplyingStoredState = false
+        }
+
+        Task { [weak self, persistence] in
+            await persistence.deleteProfileAndReindex(
+                id: id,
+                activeProfileID: nextSelectedProfileID,
+                remainingProfiles: remainingProfiles.map {
+                    StoredBrowserProfile(
+                        id: $0.id,
+                        name: $0.name,
+                        colorHex: $0.colorHex,
+                        position: $0.position
+                    )
+                }
+            )
+
+            guard wasSelectedProfile, let nextSelectedProfileID else {
+                return
+            }
+
+            let profileState = await persistence.loadProfileState(profileID: nextSelectedProfileID)
+            await MainActor.run {
+                guard self?.selectedProfileID == nextSelectedProfileID else {
+                    return
+                }
+
+                self?.applyProfileState(bookmarks: profileState.bookmarks, session: profileState.session)
+            }
+        }
+    }
+
     func switchProfile(id: BrowserProfile.ID) {
         guard profiles.contains(where: { $0.id == id }),
               selectedProfileID != id else {
@@ -552,13 +698,81 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         removeToast(id: id)
     }
 
+    func showDebugDownloadToast() {
+        let id = UUID()
+        let download = BrowserDownload(
+            id: id,
+            sourceURL: URL(string: "https://example.com/debug-download.zip"),
+            destinationURL: nil,
+            suggestedFilename: "debug-download.zip",
+            receivedBytes: 420_000,
+            expectedBytes: 1_000_000,
+            startedAt: Date(),
+            finishedAt: nil,
+            status: .inProgress,
+            errorMessage: nil
+        )
+
+        downloads.insert(download, at: 0)
+        showDownloadToast(for: download)
+    }
+
+    func showDebugMicrophonePermissionToast() {
+        showDebugMediaPermissionToast(
+            title: "example.com Wants to Use Microphone",
+            message: "Allow access to microphone for this request?",
+            iconSystemName: "mic.fill"
+        )
+    }
+
+    func showDebugVideoPermissionToast() {
+        showDebugMediaPermissionToast(
+            title: "example.com Wants to Use Camera",
+            message: "Allow access to camera for this request?",
+            iconSystemName: "video.fill"
+        )
+    }
+
+    func showDebugJavaScriptAlert() {
+        let alert = NSAlert()
+        alert.messageText = "example.com"
+        alert.informativeText = "This is a debug JavaScript alert."
+        alert.addButton(withTitle: "OK")
+
+        runAlert(alert, attachedTo: activeTab?.webView.window) { _ in }
+    }
+
+    func showDebugJavaScriptConfirm() {
+        let alert = NSAlert()
+        alert.messageText = "example.com"
+        alert.informativeText = "This is a debug JavaScript confirm dialog."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        runAlert(alert, attachedTo: activeTab?.webView.window) { _ in }
+    }
+
+    func showDebugJavaScriptPrompt() {
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        textField.stringValue = "Default text"
+
+        let alert = NSAlert()
+        alert.messageText = "example.com"
+        alert.informativeText = "This is a debug JavaScript prompt."
+        alert.accessoryView = textField
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        runAlert(alert, attachedTo: activeTab?.webView.window) { _ in }
+    }
+
     func webView(
         _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        configureWebViewConfiguration(configuration)
+        configuration.userContentController.removeScriptMessageHandler(forName: "browserConsole")
 
         let webView = BrowserWebView(frame: .zero, configuration: configuration)
         webView.underPageBackgroundColor = .white
@@ -816,6 +1030,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         mountedTabIDs.removeAll()
         pendingTabLoads.removeAll()
         mountRequestedTabIDs = []
+        recentlyClosedTabs.removeAll()
         tabs = []
         bookmarks = []
         selectedTabID = nil
@@ -868,52 +1083,6 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         BrowserWebView.configure(configuration, consoleMessageHandler: BrowserConsoleScriptMessageHandler(browser: self))
     }
 
-    private func requestPasskeyAccessIfNeeded() {
-        guard Self.hasBooleanEntitlement(Self.passkeyEntitlement) else {
-            NSLog("Browser passkey access is unavailable because \(Self.passkeyEntitlement) is not present")
-            return
-        }
-
-        let state = passkeyCredentialManager.authorizationStateForPlatformCredentials
-
-        switch state {
-        case .authorized, .denied:
-            Self.logPasskeyAuthorizationState(state)
-        case .notDetermined:
-            passkeyCredentialManager.requestAuthorizationForPublicKeyCredentials { state in
-                BrowserState.logPasskeyAuthorizationState(state)
-            }
-        @unknown default:
-            BrowserState.logPasskeyAuthorizationState(state)
-        }
-    }
-
-    nonisolated private static func logPasskeyAuthorizationState(_ state: ASAuthorizationWebBrowserPublicKeyCredentialManager.AuthorizationState) {
-        let label: String
-
-        switch state {
-        case .authorized:
-            label = "authorized"
-        case .denied:
-            label = "denied"
-        case .notDetermined:
-            label = "not determined"
-        @unknown default:
-            label = "unknown"
-        }
-
-        NSLog("Browser passkey access is \(label)")
-    }
-
-    nonisolated private static func hasBooleanEntitlement(_ key: String) -> Bool {
-        guard let task = SecTaskCreateFromSelf(nil),
-              let value = SecTaskCopyValueForEntitlement(task, key as CFString, nil) else {
-            return false
-        }
-
-        return (value as? Bool) == true
-    }
-
     private static func selectedProfileID(from profiles: [BrowserProfile], storedID: UUID?) -> UUID? {
         if let storedID,
            profiles.contains(where: { $0.id == storedID }) {
@@ -943,11 +1112,17 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
     }
 
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
+
     private func begin(_ download: WKDownload, from sourceURL: URL?) {
         download.delegate = self
 
         let id = UUID()
         let displayName = sourceURL?.lastPathComponent.nonEmpty ?? "Download"
+        activeDownloads[id] = download
         downloadIDsByDownload[ObjectIdentifier(download)] = id
         downloads.insert(
             BrowserDownload(
@@ -964,6 +1139,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             ),
             at: 0
         )
+        observeDownloadProgress(download, id: id)
         showDownloadToast(for: downloads[0])
         persistDownload(id: id)
     }
@@ -991,7 +1167,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
         refreshDownloadToast(download)
         persistDownload(download)
-        downloadIDsByDownload.removeValue(forKey: ObjectIdentifier(download))
+        removeActiveDownload(download)
     }
 
     func download(
@@ -1010,7 +1186,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
         refreshDownloadToast(download)
         persistDownload(download)
-        downloadIDsByDownload.removeValue(forKey: ObjectIdentifier(download))
+        removeActiveDownload(download)
     }
 
     private func update(_ download: WKDownload, mutate: (inout BrowserDownload) -> Void) {
@@ -1022,10 +1198,81 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         mutate(&downloads[index])
     }
 
+    private func observeDownloadProgress(_ download: WKDownload, id: BrowserDownload.ID) {
+        let progress = download.progress
+        activeDownloadProgressSnapshots[id] = (receivedBytes: 0, date: Date())
+
+        let completedObservation = progress.observe(\.completedUnitCount, options: [.initial, .new]) { [weak self] progress, _ in
+            Task { @MainActor in
+                self?.updateDownloadProgress(id: id, progress: progress)
+            }
+        }
+        let totalObservation = progress.observe(\.totalUnitCount, options: [.initial, .new]) { [weak self] progress, _ in
+            Task { @MainActor in
+                self?.updateDownloadProgress(id: id, progress: progress)
+            }
+        }
+
+        activeDownloadProgressObservations[id] = [completedObservation, totalObservation]
+    }
+
+    private func updateDownloadProgress(id: BrowserDownload.ID, progress: Progress) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }),
+              downloads[index].status == .inProgress else {
+            return
+        }
+
+        let receivedBytes = max(progress.completedUnitCount, 0)
+        let expectedBytes = progress.totalUnitCount > 0 ? progress.totalUnitCount : nil
+        let now = Date()
+        let previousSnapshot = activeDownloadProgressSnapshots[id]
+
+        var speedBytesPerSecond = downloads[index].speedBytesPerSecond
+        if let previousSnapshot {
+            let elapsed = now.timeIntervalSince(previousSnapshot.date)
+            let byteDelta = receivedBytes - previousSnapshot.receivedBytes
+            if elapsed >= 0.35, byteDelta >= 0 {
+                speedBytesPerSecond = Int64(Double(byteDelta) / elapsed)
+                activeDownloadProgressSnapshots[id] = (receivedBytes: receivedBytes, date: now)
+            }
+        } else {
+            activeDownloadProgressSnapshots[id] = (receivedBytes: receivedBytes, date: now)
+        }
+
+        downloads[index].receivedBytes = receivedBytes
+        downloads[index].expectedBytes = expectedBytes
+        downloads[index].speedBytesPerSecond = speedBytesPerSecond
+        showDownloadToast(for: downloads[index])
+    }
+
+    private func removeActiveDownload(_ download: WKDownload) {
+        let downloadObjectID = ObjectIdentifier(download)
+        guard let id = downloadIDsByDownload.removeValue(forKey: downloadObjectID) else {
+            return
+        }
+
+        activeDownloads.removeValue(forKey: id)
+        activeDownloadProgressObservations.removeValue(forKey: id)
+        activeDownloadProgressSnapshots.removeValue(forKey: id)
+    }
+
     private func showToast(_ toast: BrowserToast) {
         cancelToastDismissal(id: toast.id)
         toasts.removeAll { $0.id == toast.id }
         toasts.insert(toast, at: 0)
+    }
+
+    private func showDebugMediaPermissionToast(title: String, message: String, iconSystemName: String) {
+        showToast(BrowserToast(
+            id: UUID(),
+            kind: .mediaPermission,
+            title: title,
+            message: message,
+            iconSystemName: iconSystemName,
+            status: .pending,
+            progressFraction: nil,
+            downloadID: nil
+        ))
     }
 
     private func removeToast(id: BrowserToast.ID) {
@@ -1385,6 +1632,18 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         return tabs[min(closedIndex, tabs.count - 1)].id
     }
 
+    private func rememberClosedTab(_ tab: BrowserTab, position: Int) {
+        recentlyClosedTabs.append(RecentlyClosedTab(
+            title: tab.displayTitle,
+            url: tab.webView.url ?? tab.url,
+            position: position
+        ))
+
+        if recentlyClosedTabs.count > Self.recentlyClosedTabLimit {
+            recentlyClosedTabs.removeFirst(recentlyClosedTabs.count - Self.recentlyClosedTabLimit)
+        }
+    }
+
     private func loadBookmarkFaviconIfNeeded(_ bookmark: BrowserBookmark) {
         guard bookmark.favicon == nil, bookmarkFaviconTasks[bookmark.id] == nil else {
             return
@@ -1494,6 +1753,12 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
     }
 
+}
+
+private struct RecentlyClosedTab {
+    let title: String
+    let url: URL?
+    let position: Int
 }
 
 private struct BrowserMediaPermissionRequest {

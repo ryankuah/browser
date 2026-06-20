@@ -7,6 +7,9 @@ struct BrowserSidebar: View {
     @ObservedObject var updateController: BrowserUpdateController
     @Binding var isSettingsPresented: Bool
     let window: NSWindow?
+    let cornerRadius: CGFloat
+    let onOpenFullSettings: () -> Void
+    let onOpenAddressPrompt: () -> Void
 
     @State private var isDownloadsPresented = false
     @State private var draggedTabID: BrowserTab.ID?
@@ -28,7 +31,8 @@ struct BrowserSidebar: View {
                 browser: browser,
                 updateController: updateController,
                 isPresented: $isDownloadsPresented,
-                isSettingsPresented: $isSettingsPresented
+                isSettingsPresented: $isSettingsPresented,
+                onOpenFullSettings: onOpenFullSettings
             )
                 .padding(.horizontal, 10)
                 .padding(.bottom, 12)
@@ -37,7 +41,11 @@ struct BrowserSidebar: View {
         .background {
             BrowserChromeBackground(
                 bezelStyle: browser.bezelStyle,
-                cornerRadius: 0,
+                cornerRadius: cornerRadius,
+                maskedCorners: [
+                    .layerMinXMinYCorner,
+                    .layerMinXMaxYCorner
+                ],
                 effect: .liquidGlass(
                     style: .regular,
                     tintColor: NSColor.black.withAlphaComponent(0.06)
@@ -52,6 +60,10 @@ struct BrowserSidebar: View {
                 .fill(.white.opacity(0.18))
                 .frame(width: 1)
                 .allowsHitTesting(false)
+        }
+        .onDisappear {
+            isDownloadsPresented = false
+            isSettingsPresented = false
         }
     }
 
@@ -87,7 +99,8 @@ struct BrowserSidebar: View {
     private var activePageControls: some View {
         BrowserControls(
             browser: browser,
-            tab: browser.activeTab
+            tab: browser.activeTab,
+            onOpenAddressPrompt: onOpenAddressPrompt
         )
         .id(browser.activeTab?.id)
     }
@@ -166,6 +179,7 @@ private struct DownloadsFooter: View {
     @ObservedObject var updateController: BrowserUpdateController
     @Binding var isPresented: Bool
     @Binding var isSettingsPresented: Bool
+    let onOpenFullSettings: () -> Void
 
     private var activeDownloadCount: Int {
         browser.downloads.filter { $0.status == .inProgress }.count
@@ -176,7 +190,8 @@ private struct DownloadsFooter: View {
             if isPresented {
                 DownloadsPanel(
                     browser: browser,
-                    bezelStyle: browser.bezelStyle
+                    bezelStyle: browser.bezelStyle,
+                    profileColor: browser.profileNSColor
                 )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -184,7 +199,9 @@ private struct DownloadsFooter: View {
             if isSettingsPresented {
                 BrowserSettingsPanel(
                     browser: browser,
-                    bezelStyle: browser.bezelStyle
+                    bezelStyle: browser.bezelStyle,
+                    profileColor: browser.profileNSColor,
+                    onOpenFullSettings: onOpenFullSettings
                 )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -208,6 +225,9 @@ private struct DownloadsFooter: View {
                     isPresented: isPresented
                 ) {
                     withAnimation(.easeInOut(duration: 0.14)) {
+                        if !isPresented {
+                            isSettingsPresented = false
+                        }
                         isPresented.toggle()
                     }
                 }
@@ -217,6 +237,9 @@ private struct DownloadsFooter: View {
                     label: "Settings"
                 ) {
                     withAnimation(.easeInOut(duration: 0.16)) {
+                        if !isSettingsPresented {
+                            isPresented = false
+                        }
                         isSettingsPresented.toggle()
                     }
                 }
@@ -271,8 +294,11 @@ private struct DownloadsIconButton: View {
 private struct BrowserSettingsPanel: View {
     @ObservedObject var browser: BrowserState
     let bezelStyle: BrowserBezelStyle
+    let profileColor: NSColor
+    let onOpenFullSettings: () -> Void
 
     @State private var isAddingProfile = false
+    @State private var editingProfileID: BrowserProfile.ID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -289,11 +315,6 @@ private struct BrowserSettingsPanel: View {
                 .opacity(0.45)
 
             VStack(alignment: .leading, spacing: 10) {
-                SettingsRow(title: "Downloads", value: browser.downloadsDirectoryDisplayPath)
-
-                Divider()
-                    .opacity(0.38)
-
                 VStack(alignment: .leading, spacing: 7) {
                     HStack {
                         Text("Profiles")
@@ -321,7 +342,8 @@ private struct BrowserSettingsPanel: View {
                         ProfileCreationPanel(
                             title: "New Profile",
                             defaultName: "",
-                            defaultColor: NSColor(hexString: BrowserProfile.defaultColorHex) ?? .systemBlue
+                            defaultColor: NSColor(hexString: BrowserProfile.defaultColorHex) ?? .systemBlue,
+                            profileColor: profileColor
                         ) { name, colorHex in
                             browser.createProfile(name: name, colorHex: colorHex)
                             withAnimation(.easeInOut(duration: 0.14)) {
@@ -331,45 +353,45 @@ private struct BrowserSettingsPanel: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
+                    if let editingProfile = editingProfile {
+                        ProfileCreationPanel(
+                            title: "Edit Profile",
+                            defaultName: editingProfile.displayName,
+                            defaultColor: NSColor(hexString: editingProfile.colorHex) ?? .systemBlue,
+                            submitTitle: "Save",
+                            profileColor: profileColor
+                        ) { name, colorHex in
+                            browser.updateProfile(id: editingProfile.id, name: name, colorHex: colorHex)
+                            withAnimation(.easeInOut(duration: 0.14)) {
+                                editingProfileID = nil
+                            }
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
                     HStack(spacing: 6) {
                         ForEach(browser.profiles) { profile in
-                            Button {
-                                browser.switchProfile(id: profile.id)
-                            } label: {
-                                Circle()
-                                    .fill(Color(nsColor: NSColor(hexString: profile.colorHex) ?? .systemBlue))
-                                    .frame(width: 18, height: 18)
-                                    .overlay {
-                                        if browser.selectedProfileID == profile.id {
-                                            Circle()
-                                                .stroke(Color.primary.opacity(0.7), lineWidth: 2)
-                                        }
+                            ProfileDotButton(
+                                profile: profile,
+                                isSelected: browser.selectedProfileID == profile.id,
+                                onSelect: {
+                                    browser.switchProfile(id: profile.id)
+                                },
+                                onEdit: {
+                                    withAnimation(.easeInOut(duration: 0.14)) {
+                                        isAddingProfile = false
+                                        editingProfileID = profile.id
                                     }
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(profile.displayName)
-                            .help(profile.displayName)
-                        }
-                    }
-                }
-
-                Divider()
-                    .opacity(0.38)
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Search Engine")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 6) {
-                        ForEach(BrowserSearchEngine.allCases, id: \.rawValue) { engine in
-                            SettingsSegmentButton(
-                                title: engine.label,
-                                isSelected: browser.searchEngine == engine
-                            ) {
-                                browser.setSearchEngine(engine)
-                            }
+                                },
+                                onDelete: {
+                                    withAnimation(.easeInOut(duration: 0.14)) {
+                                        if editingProfileID == profile.id {
+                                            editingProfileID = nil
+                                        }
+                                        browser.deleteProfile(id: profile.id)
+                                    }
+                                }
+                            )
                         }
                     }
                 }
@@ -409,6 +431,25 @@ private struct BrowserSettingsPanel: View {
                     }
 
                     Spacer()
+
+                    Button(action: onOpenFullSettings) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 30, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+                    .background {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.primary.opacity(0.1))
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                    }
+                    .accessibilityLabel("Open Full Settings")
+                    .help("Full Settings")
                 }
             }
             .padding(10)
@@ -417,13 +458,57 @@ private struct BrowserSettingsPanel: View {
             BrowserChromeBackground(
                 bezelStyle: bezelStyle,
                 cornerRadius: 8,
-                effect: .material
+                effect: .liquidGlass(
+                    style: .regular,
+                    tintColor: NSColor.black.withAlphaComponent(0.12)
+                ),
+                profileColor: profileColor
             )
         }
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         }
+    }
+
+    private var editingProfile: BrowserProfile? {
+        guard let editingProfileID else {
+            return nil
+        }
+
+        return browser.profiles.first { $0.id == editingProfileID }
+    }
+}
+
+private struct ProfileDotButton: View {
+    let profile: BrowserProfile
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            Circle()
+                .fill(Color(nsColor: NSColor(hexString: profile.colorHex) ?? .systemBlue))
+                .frame(width: 18, height: 18)
+                .overlay {
+                    if isSelected {
+                        Circle()
+                            .stroke(Color.primary.opacity(0.7), lineWidth: 2)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Edit", action: onEdit)
+            Button(role: .destructive, action: onDelete) {
+                Text("Delete")
+            }
+        }
+        .accessibilityLabel(profile.displayName)
+        .help(profile.displayName)
     }
 }
 
@@ -488,7 +573,7 @@ private struct MediaPermissionButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: kind.iconSystemName)
+            Image(systemName: iconSystemName)
                 .font(.system(size: 13, weight: .semibold))
                 .frame(width: 30, height: 28)
                 .contentShape(Rectangle())
@@ -511,6 +596,19 @@ private struct MediaPermissionButton: View {
         .help("\(kind.accessibilityLabel): \(isAllowed ? "Allowed" : "Blocked")")
     }
 
+    private var iconSystemName: String {
+        if isAllowed {
+            return kind.iconSystemName
+        }
+
+        switch kind {
+        case .camera:
+            return "video.slash.fill"
+        case .microphone:
+            return "mic.slash.fill"
+        }
+    }
+
     private var backgroundColor: Color {
         if isAllowed {
             return Color.green.opacity(0.14)
@@ -523,6 +621,7 @@ private struct MediaPermissionButton: View {
 private struct DownloadsPanel: View {
     @ObservedObject var browser: BrowserState
     let bezelStyle: BrowserBezelStyle
+    let profileColor: NSColor
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -548,9 +647,21 @@ private struct DownloadsPanel: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
                         ForEach(Array(browser.downloads.prefix(30))) { download in
-                            DownloadRow(download: download) {
-                                browser.openDownloadedFile(download)
-                            }
+                            DownloadRow(
+                                download: download,
+                                onOpen: {
+                                    browser.openDownloadedFile(download)
+                                },
+                                onShowInFinder: {
+                                    browser.showDownloadInFinder(download)
+                                },
+                                onCopyFilePath: {
+                                    browser.copyDownloadFilePath(download)
+                                },
+                                onCopySourceURL: {
+                                    browser.copyDownloadSourceURL(download)
+                                }
+                            )
                         }
                     }
                     .padding(6)
@@ -563,7 +674,11 @@ private struct DownloadsPanel: View {
             BrowserChromeBackground(
                 bezelStyle: bezelStyle,
                 cornerRadius: 8,
-                effect: .material
+                effect: .liquidGlass(
+                    style: .regular,
+                    tintColor: NSColor.black.withAlphaComponent(0.12)
+                ),
+                profileColor: profileColor
             )
         }
         .overlay {
@@ -576,6 +691,9 @@ private struct DownloadsPanel: View {
 private struct DownloadRow: View {
     let download: BrowserDownload
     let onOpen: () -> Void
+    let onShowInFinder: () -> Void
+    let onCopyFilePath: () -> Void
+    let onCopySourceURL: () -> Void
 
     @State private var isHovered = false
 
@@ -610,6 +728,29 @@ private struct DownloadRow: View {
         .onTapGesture {
             onOpen()
         }
+        .contextMenu {
+            Button("Open") {
+                onOpen()
+            }
+            .disabled(download.status != .finished || download.destinationURL == nil)
+
+            Button("Show in Finder") {
+                onShowInFinder()
+            }
+            .disabled(download.destinationURL == nil)
+
+            Divider()
+
+            Button("Copy File Path") {
+                onCopyFilePath()
+            }
+            .disabled(download.destinationURL == nil)
+
+            Button("Copy Source URL") {
+                onCopySourceURL()
+            }
+            .disabled(download.sourceURL == nil)
+        }
         .accessibilityLabel(download.displayName)
         .help(download.status == .finished ? "Open Download" : download.status.label)
     }
@@ -636,17 +777,18 @@ private struct DownloadRow: View {
 private struct BrowserControls: View {
     @ObservedObject var browser: BrowserState
     var tab: BrowserTab?
+    let onOpenAddressPrompt: () -> Void
 
     @ViewBuilder
     var body: some View {
         if let tab {
             BrowserAddressField(
                 tab: tab,
-                onSubmit: browser.loadAddress
+                onOpenAddressPrompt: onOpenAddressPrompt
             )
             .padding(.horizontal, 10)
         } else {
-            EmptyBrowserAddressField(onSubmit: browser.loadAddress)
+            EmptyBrowserAddressField(onOpenAddressPrompt: onOpenAddressPrompt)
                 .padding(.horizontal, 10)
         }
     }
@@ -970,10 +1112,7 @@ private struct BookmarkIcon: View {
 private struct BrowserAddressField: View {
     @ObservedObject var tab: BrowserTab
 
-    let onSubmit: (String) -> Void
-
-    @FocusState private var isFocused: Bool
-    @State private var addressText = ""
+    let onOpenAddressPrompt: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -986,16 +1125,12 @@ private struct BrowserAddressField: View {
                     .help(originSecurityState.accessibilityLabel)
             }
 
-            TextField("Search or enter website", text: $addressText)
-                .textFieldStyle(.plain)
+            Text(displayText)
                 .font(.system(size: 13, weight: .regular))
                 .lineLimit(1)
-                .focused($isFocused)
-                .cursor(.iBeam)
-                .onSubmit {
-                    onSubmit(addressText)
-                    isFocused = false
-                }
+                .foregroundStyle(isPlaceholder ? .secondary : .primary)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
@@ -1005,25 +1140,21 @@ private struct BrowserAddressField: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isFocused ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.22), lineWidth: 1)
+                .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
         }
-        .onAppear {
-            addressText = tab.displayAddressText
-        }
-        .onChange(of: isFocused) { _, newValue in
-            if newValue {
-                addressText = tab.addressText
-            } else {
-                addressText = tab.displayAddressText
-            }
-        }
-        .onChange(of: tab.addressText) { _, newValue in
-            guard !isFocused else {
-                return
-            }
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .cursor(.iBeam)
+        .onTapGesture(perform: onOpenAddressPrompt)
+        .accessibilityLabel("Address")
+        .accessibilityValue(tab.addressText)
+    }
 
-            addressText = tab.displayAddressText
-        }
+    private var displayText: String {
+        isPlaceholder ? "Search or enter website" : tab.displayAddressText
+    }
+
+    private var isPlaceholder: Bool {
+        tab.displayAddressText.isEmpty
     }
 
     private var originSecurityState: OriginSecurityState {
@@ -1054,24 +1185,15 @@ private struct BrowserAddressField: View {
 }
 
 private struct EmptyBrowserAddressField: View {
-    let onSubmit: (String) -> Void
-
-    @FocusState private var isFocused: Bool
-    @State private var addressText = ""
+    let onOpenAddressPrompt: () -> Void
 
     var body: some View {
         HStack {
-            TextField("Search or enter website", text: $addressText)
-                .textFieldStyle(.plain)
+            Text("Search or enter website")
                 .font(.system(size: 13, weight: .regular))
                 .lineLimit(1)
-                .focused($isFocused)
-                .cursor(.iBeam)
-                .onSubmit {
-                    onSubmit(addressText)
-                    isFocused = false
-                    addressText = ""
-                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
@@ -1081,8 +1203,12 @@ private struct EmptyBrowserAddressField: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isFocused ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.22), lineWidth: 1)
+                .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
         }
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .cursor(.iBeam)
+        .onTapGesture(perform: onOpenAddressPrompt)
+        .accessibilityLabel("Address")
     }
 }
 
