@@ -1,67 +1,6 @@
 import Foundation
 import SQLite3
 
-struct StoredBrowserSession: Sendable {
-    let selectedTabID: UUID?
-    let tabs: [StoredBrowserTab]
-}
-
-struct StoredBrowserTab: Sendable {
-    let id: UUID
-    let position: Int
-    let title: String
-    let url: URL?
-}
-
-struct BrowserTabSnapshot: Sendable {
-    let id: UUID
-    let position: Int
-    let title: String
-    let url: URL?
-}
-
-struct StoredBrowserProfile: Sendable {
-    let id: UUID
-    let name: String
-    let colorHex: String
-    let position: Int
-}
-
-struct StoredBrowserBookmark: Sendable {
-    let id: UUID
-    let position: Int
-    let title: String
-    let url: URL
-}
-
-struct StoredHistorySuggestion: Sendable {
-    let title: String
-    let url: URL
-    let visitedAt: Date
-    let faviconData: Data?
-}
-
-struct StoredMediaPermissionDecision: Sendable {
-    let origin: String
-    let deviceKind: String
-    let isAllowed: Bool
-}
-
-enum BrowserDatabaseError: LocalizedError {
-    case openFailed(String)
-    case sqliteFailure(String)
-    case invalidApplicationSupportDirectory
-
-    var errorDescription: String? {
-        switch self {
-        case .openFailed(let message), .sqliteFailure(let message):
-            return message
-        case .invalidApplicationSupportDirectory:
-            return "Could not locate the Application Support directory."
-        }
-    }
-}
-
 final class BrowserDatabase {
     private static let defaultSessionID = "default"
 
@@ -248,29 +187,97 @@ final class BrowserDatabase {
         }
     }
 
-    func recordHistoryVisit(url: URL, title: String, tabID: UUID?) throws {
+    func recordHistoryVisit(url: URL, title: String, tabID: UUID?, journeyID: UUID?, parentVisitID: Int64?) throws -> Int64 {
+        var historyVisitID: Int64 = 0
+
+        try transaction {
+            let visitedAt = Date().timeIntervalSince1970
+            let origin = BrowserNavigation.originKey(for: url)
+            let resolvedParentVisitID = try resolvedHistoryParentVisitID(
+                parentVisitID,
+                tabID: tabID,
+                journeyID: journeyID
+            )
+            try withStatement(
+                """
+                INSERT INTO history_visits (url, title, tab_id, visited_at, origin, history_journey_id, history_parent_visit_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """
+            ) { statement in
+                try statement.bind(url.absoluteString, at: 1)
+                try statement.bind(title, at: 2)
+                try statement.bind(tabID?.uuidString, at: 3)
+                try statement.bind(visitedAt, at: 4)
+                try statement.bind(origin, at: 5)
+                try statement.bind(journeyID?.uuidString, at: 6)
+                try statement.bind(resolvedParentVisitID, at: 7)
+                try statement.stepDone()
+            }
+
+            historyVisitID = sqlite3_last_insert_rowid(db)
+            try recordAutocompleteVisit(url: url, title: title, visitedAt: visitedAt)
+        }
+
+        return historyVisitID
+    }
+
+    private func resolvedHistoryParentVisitID(_ parentVisitID: Int64?, tabID: UUID?, journeyID: UUID?) throws -> Int64? {
+        guard let journeyID else {
+            return nil
+        }
+
+        if let parentVisitID,
+           try isHistoryParentVisitID(parentVisitID, in: journeyID) {
+            return parentVisitID
+        }
+
+        guard let tabID else {
+            return nil
+        }
+
+        return try latestHistoryVisitID(tabID: tabID, journeyID: journeyID)
+    }
+
+    private func isHistoryParentVisitID(_ parentVisitID: Int64, in journeyID: UUID) throws -> Bool {
         try withStatement(
             """
-            INSERT INTO history_visits (url, title, tab_id, visited_at, origin)
-            VALUES (?, ?, ?, ?, ?)
+            SELECT 1
+            FROM history_visits
+            WHERE id = ?
+              AND history_journey_id = ?
+            LIMIT 1
             """
         ) { statement in
-            try statement.bind(url.absoluteString, at: 1)
-            try statement.bind(title, at: 2)
-            try statement.bind(tabID?.uuidString, at: 3)
-            try statement.bind(Date().timeIntervalSince1970, at: 4)
-            try statement.bind(Self.originKey(for: url), at: 5)
-            try statement.stepDone()
+            try statement.bind(parentVisitID, at: 1)
+            try statement.bind(journeyID.uuidString, at: 2)
+            return try statement.step() == SQLite.row
         }
     }
 
-    func loadRecentHistorySuggestions(limit: Int) throws -> [StoredHistorySuggestion] {
+    private func latestHistoryVisitID(tabID: UUID, journeyID: UUID) throws -> Int64? {
+        return try withStatement(
+            """
+            SELECT id
+            FROM history_visits
+            WHERE tab_id = ?
+              AND history_journey_id = ?
+            ORDER BY visited_at DESC, id DESC
+            LIMIT 1
+            """
+        ) { statement in
+            try statement.bind(tabID.uuidString, at: 1)
+            try statement.bind(journeyID.uuidString, at: 2)
+            return try statement.step() == SQLite.row ? statement.int64(at: 0) : nil
+        }
+    }
+
+    func loadRecentHistoryEntries(limit: Int) throws -> [StoredHistoryEntry] {
         try withStatement(
             """
-            SELECT history_visits.url, history_visits.title, history_visits.visited_at, favicons.image_data
+            SELECT history_visits.url, history_visits.title, latest_visits.latest_visit, latest_visits.visit_count, favicons.image_data
             FROM history_visits
             INNER JOIN (
-                SELECT url, MAX(visited_at) AS latest_visit
+                SELECT url, MAX(visited_at) AS latest_visit, COUNT(*) AS visit_count
                 FROM history_visits
                 GROUP BY url
             ) latest_visits
@@ -279,30 +286,215 @@ final class BrowserDatabase {
             LEFT JOIN favicons
                 ON favicons.origin = history_visits.origin
             GROUP BY history_visits.url
-            ORDER BY history_visits.visited_at DESC
+            ORDER BY latest_visits.latest_visit DESC
             LIMIT ?
             """
         ) { statement in
             try statement.bind(Int64(limit), at: 1)
 
-            var suggestions: [StoredHistorySuggestion] = []
+            var entries: [StoredHistoryEntry] = []
             while try statement.step() == SQLite.row {
                 guard let rawURL = statement.text(at: 0),
                       let url = URL(string: rawURL) else {
                     continue
                 }
 
-                suggestions.append(
-                    StoredHistorySuggestion(
+                entries.append(
+                    StoredHistoryEntry(
                         title: statement.text(at: 1) ?? url.host() ?? rawURL,
                         url: url,
-                        visitedAt: Date(timeIntervalSince1970: statement.double(at: 2)),
-                        faviconData: statement.data(at: 3)
+                        lastVisitedAt: Date(timeIntervalSince1970: statement.double(at: 2)),
+                        visitCount: Int(statement.int64(at: 3)),
+                        faviconData: statement.data(at: 4)
                     )
                 )
             }
 
-            return suggestions
+            return entries
+        }
+    }
+
+    func loadRecentHistoryVisits(limit: Int) throws -> [StoredHistoryVisit] {
+        try withStatement(
+            """
+            SELECT history_visits.id, history_visits.title, history_visits.url, history_visits.visited_at, favicons.image_data
+            FROM history_visits
+            LEFT JOIN favicons
+                ON favicons.origin = history_visits.origin
+            ORDER BY history_visits.visited_at DESC, history_visits.id DESC
+            LIMIT ?
+            """
+        ) { statement in
+            try statement.bind(Int64(limit), at: 1)
+
+            var visits: [StoredHistoryVisit] = []
+            while try statement.step() == SQLite.row {
+                guard let rawURL = statement.text(at: 2),
+                      let url = URL(string: rawURL) else {
+                    continue
+                }
+
+                visits.append(
+                    StoredHistoryVisit(
+                        id: statement.int64(at: 0),
+                        title: statement.text(at: 1) ?? url.host() ?? rawURL,
+                        url: url,
+                        visitedAt: Date(timeIntervalSince1970: statement.double(at: 3)),
+                        faviconData: statement.data(at: 4)
+                    )
+                )
+            }
+
+            return visits
+        }
+    }
+
+    func loadRecentHistoryTreeNodes(limit: Int) throws -> [StoredHistoryTreeNode] {
+        try withStatement(
+            """
+            WITH recent_journeys AS (
+                SELECT history_journey_id, MAX(visited_at) AS latest_visit
+                FROM history_visits
+                WHERE history_journey_id IS NOT NULL
+                GROUP BY history_journey_id
+                ORDER BY latest_visit DESC
+                LIMIT ?
+            )
+            SELECT history_visits.id,
+                   history_visits.history_journey_id,
+                   history_visits.history_parent_visit_id,
+                   history_visits.title,
+                   history_visits.url,
+                   history_visits.visited_at,
+                   favicons.image_data
+            FROM history_visits
+            INNER JOIN recent_journeys
+                ON recent_journeys.history_journey_id = history_visits.history_journey_id
+            LEFT JOIN favicons
+                ON favicons.origin = history_visits.origin
+            WHERE history_visits.history_journey_id IS NOT NULL
+            ORDER BY recent_journeys.latest_visit DESC, history_visits.visited_at ASC
+            """
+        ) { statement in
+            try statement.bind(Int64(limit), at: 1)
+
+            var nodes: [StoredHistoryTreeNode] = []
+            while try statement.step() == SQLite.row {
+                guard let rawJourneyID = statement.text(at: 1),
+                      let journeyID = UUID(uuidString: rawJourneyID),
+                      let rawURL = statement.text(at: 4),
+                      let url = URL(string: rawURL) else {
+                    continue
+                }
+
+                nodes.append(
+                    StoredHistoryTreeNode(
+                        id: statement.int64(at: 0),
+                        journeyID: journeyID,
+                        parentID: statement.optionalInt64(at: 2),
+                        title: statement.text(at: 3) ?? url.host() ?? rawURL,
+                        url: url,
+                        visitedAt: Date(timeIntervalSince1970: statement.double(at: 5)),
+                        faviconData: statement.data(at: 6)
+                    )
+                )
+            }
+
+            return nodes
+        }
+    }
+
+    func loadAutocompleteSites(limit: Int) throws -> [StoredAutocompleteSite] {
+        try withStatement(
+            """
+            SELECT site_visit_frequencies.host,
+                   site_visit_frequencies.registrable_domain,
+                   site_visit_frequencies.subdomain,
+                   site_visit_frequencies.title,
+                   site_visit_frequencies.url,
+                   site_visit_frequencies.visit_count,
+                   site_visit_frequencies.last_visited_at,
+                   favicons.image_data
+            FROM site_visit_frequencies
+            LEFT JOIN favicons
+                ON favicons.origin = 'https://' || site_visit_frequencies.host
+                OR favicons.origin = 'http://' || site_visit_frequencies.host
+            ORDER BY site_visit_frequencies.visit_count DESC,
+                     site_visit_frequencies.last_visited_at DESC
+            LIMIT ?
+            """
+        ) { statement in
+            try statement.bind(Int64(limit), at: 1)
+
+            var sites: [StoredAutocompleteSite] = []
+            while try statement.step() == SQLite.row {
+                guard let host = statement.text(at: 0),
+                      let registrableDomain = statement.text(at: 1),
+                      let rawURL = statement.text(at: 4),
+                      let url = URL(string: rawURL) else {
+                    continue
+                }
+
+                sites.append(StoredAutocompleteSite(
+                    host: host,
+                    registrableDomain: registrableDomain,
+                    subdomain: statement.text(at: 2),
+                    title: statement.text(at: 3) ?? host,
+                    url: url,
+                    visitCount: Int(statement.int64(at: 5)),
+                    lastVisitedAt: Date(timeIntervalSince1970: statement.double(at: 6)),
+                    faviconData: statement.data(at: 7)
+                ))
+            }
+
+            return sites
+        }
+    }
+
+    func loadAutocompletePages(limit: Int) throws -> [StoredAutocompletePage] {
+        try withStatement(
+            """
+            SELECT page_visit_frequencies.url,
+                   page_visit_frequencies.title,
+                   page_visit_frequencies.host,
+                   page_visit_frequencies.registrable_domain,
+                   page_visit_frequencies.subdomain,
+                   page_visit_frequencies.visit_count,
+                   page_visit_frequencies.last_visited_at,
+                   favicons.image_data
+            FROM page_visit_frequencies
+            LEFT JOIN favicons
+                ON favicons.origin = 'https://' || page_visit_frequencies.host
+                OR favicons.origin = 'http://' || page_visit_frequencies.host
+            ORDER BY page_visit_frequencies.visit_count DESC,
+                     page_visit_frequencies.last_visited_at DESC
+            LIMIT ?
+            """
+        ) { statement in
+            try statement.bind(Int64(limit), at: 1)
+
+            var pages: [StoredAutocompletePage] = []
+            while try statement.step() == SQLite.row {
+                guard let rawURL = statement.text(at: 0),
+                      let url = URL(string: rawURL),
+                      let host = statement.text(at: 2),
+                      let registrableDomain = statement.text(at: 3) else {
+                    continue
+                }
+
+                pages.append(StoredAutocompletePage(
+                    url: url,
+                    title: statement.text(at: 1) ?? url.host() ?? rawURL,
+                    host: host,
+                    registrableDomain: registrableDomain,
+                    subdomain: statement.text(at: 4),
+                    visitCount: Int(statement.int64(at: 5)),
+                    lastVisitedAt: Date(timeIntervalSince1970: statement.double(at: 6)),
+                    faviconData: statement.data(at: 7)
+                ))
+            }
+
+            return pages
         }
     }
 
@@ -325,14 +517,26 @@ final class BrowserDatabase {
         }
     }
 
-    private static func originKey(for url: URL) -> String? {
-        guard let scheme = url.scheme?.lowercased(),
-              let host = url.host()?.lowercased() else {
+    private static func autocompleteHostParts(for url: URL) -> (host: String, registrableDomain: String, subdomain: String?)? {
+        guard let rawHost = url.host()?.lowercased() else {
             return nil
         }
 
-        let port = url.port.map { ":\($0)" } ?? ""
-        return "\(scheme)://\(host)\(port)"
+        let host = rawHost.removingWWWPrefix
+        let parts = host.split(separator: ".").map(String.init)
+        guard parts.count >= 2 else {
+            return host == "localhost" ? (host, host, nil) : nil
+        }
+
+        let registrableDomain = parts.suffix(2).joined(separator: ".")
+        let subdomainParts = parts.dropLast(2)
+        let subdomain = subdomainParts.isEmpty ? nil : subdomainParts.joined(separator: ".")
+        return (host, registrableDomain, subdomain)
+    }
+
+    private static func siteURLString(for url: URL, host: String) -> String {
+        let scheme = url.scheme?.lowercased() ?? "https"
+        return "\(scheme)://\(host)"
     }
 
     func loadBookmarks(profileID: UUID) throws -> [StoredBrowserBookmark] {
@@ -828,6 +1032,155 @@ final class BrowserDatabase {
                 try execute("PRAGMA user_version = 6")
             }
         }
+
+        if version < 7 {
+            try transaction {
+                try createAutocompleteFrequencyTables()
+                try backfillAutocompleteFrequencies()
+                try execute("PRAGMA user_version = 7")
+            }
+        }
+
+        if version < 8 {
+            try transaction {
+                let historyColumns = try columns(in: "history_visits")
+                if !historyColumns.contains("history_journey_id") {
+                    try execute("ALTER TABLE history_visits ADD COLUMN history_journey_id TEXT")
+                }
+                if !historyColumns.contains("history_parent_visit_id") {
+                    try execute("ALTER TABLE history_visits ADD COLUMN history_parent_visit_id INTEGER")
+                }
+
+                try execute("CREATE INDEX IF NOT EXISTS history_visits_journey_idx ON history_visits(history_journey_id, visited_at DESC)")
+                try execute("CREATE INDEX IF NOT EXISTS history_visits_parent_idx ON history_visits(history_parent_visit_id)")
+                try execute("PRAGMA user_version = 8")
+            }
+        }
+    }
+
+    private func createAutocompleteFrequencyTables() throws {
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS site_visit_frequencies (
+                host TEXT PRIMARY KEY,
+                registrable_domain TEXT NOT NULL,
+                subdomain TEXT,
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                visit_count INTEGER NOT NULL,
+                last_visited_at REAL NOT NULL
+            )
+            """
+        )
+        try execute("CREATE INDEX IF NOT EXISTS site_visit_frequencies_registrable_idx ON site_visit_frequencies(registrable_domain)")
+        try execute("CREATE INDEX IF NOT EXISTS site_visit_frequencies_subdomain_idx ON site_visit_frequencies(subdomain)")
+        try execute("CREATE INDEX IF NOT EXISTS site_visit_frequencies_count_idx ON site_visit_frequencies(visit_count DESC, last_visited_at DESC)")
+
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS page_visit_frequencies (
+                url TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                host TEXT NOT NULL,
+                registrable_domain TEXT NOT NULL,
+                subdomain TEXT,
+                visit_count INTEGER NOT NULL,
+                last_visited_at REAL NOT NULL
+            )
+            """
+        )
+        try execute("CREATE INDEX IF NOT EXISTS page_visit_frequencies_host_idx ON page_visit_frequencies(host)")
+        try execute("CREATE INDEX IF NOT EXISTS page_visit_frequencies_registrable_idx ON page_visit_frequencies(registrable_domain)")
+        try execute("CREATE INDEX IF NOT EXISTS page_visit_frequencies_count_idx ON page_visit_frequencies(visit_count DESC, last_visited_at DESC)")
+    }
+
+    private func recordAutocompleteVisit(url: URL, title: String, visitedAt: Double) throws {
+        guard let parts = Self.autocompleteHostParts(for: url) else {
+            return
+        }
+
+        try withStatement(
+            """
+            INSERT INTO site_visit_frequencies (
+                host,
+                registrable_domain,
+                subdomain,
+                title,
+                url,
+                visit_count,
+                last_visited_at
+            )
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(host) DO UPDATE SET
+                registrable_domain = excluded.registrable_domain,
+                subdomain = excluded.subdomain,
+                title = excluded.title,
+                url = excluded.url,
+                visit_count = site_visit_frequencies.visit_count + 1,
+                last_visited_at = excluded.last_visited_at
+            """
+        ) { statement in
+            try statement.bind(parts.host, at: 1)
+            try statement.bind(parts.registrableDomain, at: 2)
+            try statement.bind(parts.subdomain, at: 3)
+            try statement.bind(title, at: 4)
+            try statement.bind(Self.siteURLString(for: url, host: parts.host), at: 5)
+            try statement.bind(visitedAt, at: 6)
+            try statement.stepDone()
+        }
+
+        try withStatement(
+            """
+            INSERT INTO page_visit_frequencies (
+                url,
+                title,
+                host,
+                registrable_domain,
+                subdomain,
+                visit_count,
+                last_visited_at
+            )
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(url) DO UPDATE SET
+                title = excluded.title,
+                host = excluded.host,
+                registrable_domain = excluded.registrable_domain,
+                subdomain = excluded.subdomain,
+                visit_count = page_visit_frequencies.visit_count + 1,
+                last_visited_at = excluded.last_visited_at
+            """
+        ) { statement in
+            try statement.bind(url.absoluteString, at: 1)
+            try statement.bind(title, at: 2)
+            try statement.bind(parts.host, at: 3)
+            try statement.bind(parts.registrableDomain, at: 4)
+            try statement.bind(parts.subdomain, at: 5)
+            try statement.bind(visitedAt, at: 6)
+            try statement.stepDone()
+        }
+    }
+
+    private func backfillAutocompleteFrequencies() throws {
+        try withStatement(
+            """
+            SELECT url, title, visited_at
+            FROM history_visits
+            ORDER BY visited_at ASC
+            """
+        ) { statement in
+            while try statement.step() == SQLite.row {
+                guard let rawURL = statement.text(at: 0),
+                      let url = URL(string: rawURL) else {
+                    continue
+                }
+
+                try recordAutocompleteVisit(
+                    url: url,
+                    title: statement.text(at: 1) ?? url.host() ?? rawURL,
+                    visitedAt: statement.double(at: 2)
+                )
+            }
+        }
     }
 
     private func backfillHistoryVisitOrigins() throws {
@@ -836,7 +1189,7 @@ final class BrowserDatabase {
             while try statement.step() == SQLite.row {
                 guard let rawURL = statement.text(at: 1),
                       let url = URL(string: rawURL),
-                      let origin = Self.originKey(for: url) else {
+                      let origin = BrowserNavigation.originKey(for: url) else {
                     continue
                 }
 
@@ -965,170 +1318,5 @@ final class BrowserDatabase {
 
     private func withStatement<T>(_ sql: String, _ operation: (SQLiteStatement) throws -> T) throws -> T {
         try operation(SQLiteStatement(db: db, sql: sql))
-    }
-}
-
-private final class SQLiteStatement {
-    private let db: OpaquePointer?
-    private var statement: OpaquePointer?
-
-    init(db: OpaquePointer?, sql: String) throws {
-        self.db = db
-
-        let result = sql.withCString { sqlPointer in
-            sqlite3_prepare_v2(db, sqlPointer, -1, &statement, nil)
-        }
-
-        guard result == SQLite.ok else {
-            throw BrowserDatabaseError.sqliteFailure(db.map(SQLite.message(for:)) ?? "Could not prepare SQLite statement.")
-        }
-    }
-
-    deinit {
-        _ = sqlite3_finalize(statement)
-    }
-
-    func bind(_ value: String?, at index: Int32) throws {
-        if let value {
-            let result = value.withCString { pointer in
-                sqlite3_bind_text(statement, index, pointer, -1, SQLite.transient)
-            }
-            try check(result)
-        } else {
-            try check(sqlite3_bind_null(statement, index))
-        }
-    }
-
-    func bind(_ value: Int64, at index: Int32) throws {
-        try check(sqlite3_bind_int64(statement, index, value))
-    }
-
-    func bind(_ value: Int64?, at index: Int32) throws {
-        if let value {
-            try bind(value, at: index)
-        } else {
-            try check(sqlite3_bind_null(statement, index))
-        }
-    }
-
-    func bind(_ value: Double, at index: Int32) throws {
-        try check(sqlite3_bind_double(statement, index, value))
-    }
-
-    func bind(_ value: Double?, at index: Int32) throws {
-        if let value {
-            try bind(value, at: index)
-        } else {
-            try check(sqlite3_bind_null(statement, index))
-        }
-    }
-
-    func bind(_ value: Data?, at index: Int32) throws {
-        if let value {
-            let result = value.withUnsafeBytes { buffer in
-                sqlite3_bind_blob(
-                    statement,
-                    index,
-                    buffer.baseAddress,
-                    Int32(value.count),
-                    SQLite.transient
-                )
-            }
-            try check(result)
-        } else {
-            try check(sqlite3_bind_null(statement, index))
-        }
-    }
-
-    func step() throws -> Int32 {
-        let result = sqlite3_step(statement)
-        guard result == SQLite.row || result == SQLite.done else {
-            throw BrowserDatabaseError.sqliteFailure(SQLite.message(for: db))
-        }
-
-        return result
-    }
-
-    func stepDone() throws {
-        let result = try step()
-        guard result == SQLite.done else {
-            throw BrowserDatabaseError.sqliteFailure("SQLite statement returned rows where none were expected.")
-        }
-    }
-
-    func text(at index: Int32) -> String? {
-        guard sqlite3_column_type(statement, index) != SQLite.null,
-              let text = sqlite3_column_text(statement, index) else {
-            return nil
-        }
-
-        return String(cString: UnsafeRawPointer(text).assumingMemoryBound(to: CChar.self))
-    }
-
-    func data(at index: Int32) -> Data? {
-        guard sqlite3_column_type(statement, index) != SQLite.null,
-              let bytes = sqlite3_column_blob(statement, index) else {
-            return nil
-        }
-
-        let byteCount = Int(sqlite3_column_bytes(statement, index))
-        guard byteCount > 0 else {
-            return nil
-        }
-
-        return Data(bytes: bytes, count: byteCount)
-    }
-
-    func int64(at index: Int32) -> Int64 {
-        sqlite3_column_int64(statement, index)
-    }
-
-    func optionalInt64(at index: Int32) -> Int64? {
-        guard sqlite3_column_type(statement, index) != SQLite.null else {
-            return nil
-        }
-
-        return sqlite3_column_int64(statement, index)
-    }
-
-    func double(at index: Int32) -> Double {
-        sqlite3_column_double(statement, index)
-    }
-
-    func optionalDouble(at index: Int32) -> Double? {
-        guard sqlite3_column_type(statement, index) != SQLite.null else {
-            return nil
-        }
-
-        return sqlite3_column_double(statement, index)
-    }
-
-    private func check(_ result: Int32) throws {
-        guard result == SQLite.ok else {
-            throw BrowserDatabaseError.sqliteFailure(SQLite.message(for: db))
-        }
-    }
-}
-
-private enum SQLite {
-    static let ok = SQLITE_OK
-    static let row = SQLITE_ROW
-    static let done = SQLITE_DONE
-    static let null = SQLITE_NULL
-
-    static let openReadWrite = SQLITE_OPEN_READWRITE
-    static let openCreate = SQLITE_OPEN_CREATE
-    static let openFullMutex = SQLITE_OPEN_FULLMUTEX
-
-    static var transient: sqlite3_destructor_type {
-        unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-    }
-
-    static func message(for db: OpaquePointer?) -> String {
-        guard let message = sqlite3_errmsg(db) else {
-            return "Unknown SQLite error."
-        }
-
-        return String(cString: message)
     }
 }

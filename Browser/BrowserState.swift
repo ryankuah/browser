@@ -11,10 +11,15 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
     @Published private(set) var tabs: [BrowserTab] = []
     @Published private(set) var bookmarks: [BrowserBookmark] = []
-    @Published private(set) var historySuggestions: [BrowserHistorySuggestion] = []
+    @Published private(set) var historyEntries: [BrowserHistoryEntry] = []
+    @Published private(set) var historyVisits: [BrowserHistoryVisit] = []
+    @Published private(set) var historyJourneys: [BrowserHistoryJourney] = []
+    @Published private(set) var autocompleteSites: [BrowserAutocompleteSite] = []
+    @Published private(set) var autocompletePages: [BrowserAutocompletePage] = []
     @Published private(set) var downloads: [BrowserDownload] = []
     @Published private(set) var consoleMessages: [BrowserConsoleMessage] = []
     @Published private(set) var toasts: [BrowserToast] = []
+    @Published private(set) var zoomHUD: BrowserZoomHUD?
     @Published var selectedTabID: BrowserTab.ID?
     @Published private(set) var profiles: [BrowserProfile] = []
     @Published private(set) var selectedProfileID: BrowserProfile.ID?
@@ -38,8 +43,13 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     private var toastIDsByDownloadID: [BrowserDownload.ID: BrowserToast.ID] = [:]
     private var mediaPermissionRequests: [BrowserToast.ID: BrowserMediaPermissionRequest] = [:]
     private var toastDismissalTasks: [BrowserToast.ID: Task<Void, Never>] = [:]
+    private var zoomHUDDismissalTask: Task<Void, Never>?
     private var recentlyClosedTabs: [RecentlyClosedTab] = []
     private var isApplyingStoredState = false
+    private var historyCursorByTabID: [BrowserTab.ID: BrowserHistoryCursor] = [:]
+    private var historyURLByTabID: [BrowserTab.ID: String] = [:]
+    private var historyRecordTasksByTabID: [BrowserTab.ID: Task<Void, Never>] = [:]
+    private var historyCursorSourceByTabID: [BrowserTab.ID: BrowserTab.ID] = [:]
 
     var activeTab: BrowserTab? {
         tabs.first { $0.id == selectedTabID }
@@ -123,7 +133,10 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         startupLoadTask?.cancel()
         sessionPersistenceTask?.cancel()
         bookmarkFaviconTasks.values.forEach { $0.cancel() }
+        historyRecordTasksByTabID.values.forEach { $0.cancel() }
+        historyCursorSourceByTabID.removeAll()
         toastDismissalTasks.values.forEach { $0.cancel() }
+        zoomHUDDismissalTask?.cancel()
     }
 
     func newTab(url: URL? = nil) {
@@ -133,6 +146,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     @discardableResult
     private func createTab(url: URL?, persist: Bool) -> BrowserTab {
         let tab = makeTab(url: url)
+        historyCursorByTabID[tab.id] = BrowserHistoryCursor(journeyID: UUID())
         tabs.append(tab)
         selectedTabID = tab.id
 
@@ -158,6 +172,10 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         mountRequestedTabIDs.remove(id)
         mountedTabIDs.remove(id)
         pendingTabLoads.removeValue(forKey: id)
+        historyCursorByTabID.removeValue(forKey: id)
+        historyURLByTabID.removeValue(forKey: id)
+        historyRecordTasksByTabID.removeValue(forKey: id)?.cancel()
+        historyCursorSourceByTabID.removeValue(forKey: id)
         clearBookmarkTabBinding(for: id)
 
         tabs.remove(at: index)
@@ -184,6 +202,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
 
         let tab = makeTab(title: closedTab.title, url: closedTab.url)
+        historyCursorByTabID[tab.id] = BrowserHistoryCursor(journeyID: UUID())
         let insertionIndex = min(closedTab.position, tabs.count)
         tabs.insert(tab, at: insertionIndex)
         selectedTabID = tab.id
@@ -256,10 +275,6 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         persistSession()
     }
 
-    func loadAddress(_ address: String) {
-        _ = navigateAddress(address)
-    }
-
     func navigateAddress(_ address: String) -> Bool {
         guard let url = BrowserNavigation.url(from: address, searchEngine: searchEngine) else {
             return false
@@ -297,38 +312,12 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
         let bookmark = bookmarks[bookmarkIndex]
         let tab = makeTab(title: bookmark.displayTitle, url: bookmark.url)
+        historyCursorByTabID[tab.id] = BrowserHistoryCursor(journeyID: UUID())
         bookmarks[bookmarkIndex].tabID = tab.id
         tabs.insert(tab, at: insertionIndexForBookmark(at: bookmarkIndex))
         selectedTabID = tab.id
         persistSession()
         load(bookmark.url, in: tab)
-    }
-
-    func toggleBookmarkForActivePage() {
-        guard let url = activeTab?.webView.url ?? activeTab?.url,
-              BrowserNavigation.isAllowedNavigationURL(url) else {
-            return
-        }
-
-        if let bookmark = bookmark(for: url) {
-            removeBookmark(id: bookmark.id)
-            return
-        }
-
-        let bookmark = BrowserBookmark(
-            id: UUID(),
-            title: activeTab?.displayTitle ?? BrowserNavigation.defaultTitle(for: url),
-            url: url,
-            favicon: activeTab?.favicon,
-            tabID: activeTab?.id
-        )
-
-        if let activeTab {
-            clearBookmarkTabBinding(for: activeTab.id)
-        }
-        bookmarks.append(bookmark)
-        persistBookmark(bookmark, position: bookmarks.count - 1)
-        loadBookmarkFaviconIfNeeded(bookmark)
     }
 
     func bookmarkTab(id: BrowserTab.ID) {
@@ -446,6 +435,41 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         activeTab?.reloadOrStop()
     }
 
+    func retryActivePageFailure() {
+        activeTab?.retryPageFailure()
+    }
+
+    func zoomInActiveTab() {
+        updateActiveTabZoom { tab in
+            tab.zoomIn()
+        }
+    }
+
+    func zoomOutActiveTab() {
+        updateActiveTabZoom { tab in
+            tab.zoomOut()
+        }
+    }
+
+    func resetActiveTabZoom() {
+        updateActiveTabZoom { tab in
+            tab.resetZoom()
+        }
+    }
+
+    func findInActivePage(_ query: String, backwards: Bool, completion: @escaping (Bool) -> Void) {
+        guard let activeTab else {
+            completion(false)
+            return
+        }
+
+        activeTab.findInPage(query, backwards: backwards, completion: completion)
+    }
+
+    func clearActiveFindSelection() {
+        activeTab?.clearFindSelection()
+    }
+
     func clearConsoleMessages() {
         consoleMessages = []
     }
@@ -505,6 +529,56 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         copyToPasteboard(sourceURL.absoluteString)
     }
 
+    func cancelDownload(id: BrowserDownload.ID) {
+        guard let download = activeDownloads[id] else {
+            markDownloadCanceled(id: id)
+            return
+        }
+
+        download.cancel { [weak self] _ in
+            Task { @MainActor in
+                self?.markDownloadCanceled(id: id)
+                self?.removeActiveDownload(download)
+            }
+        }
+    }
+
+    func retryDownload(id: BrowserDownload.ID) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }),
+              downloads[index].canRetry,
+              let sourceURL = downloads[index].sourceURL else {
+            return
+        }
+
+        guard let webView = activeTab?.webView ?? tabs.first?.webView else {
+            updateDownload(id: id) { item in
+                item.status = .failed
+                item.finishedAt = Date()
+                item.errorMessage = "No active web view"
+            }
+            persistDownload(id: id)
+            return
+        }
+
+        updateDownload(id: id) { item in
+            item.destinationURL = nil
+            item.receivedBytes = 0
+            item.expectedBytes = nil
+            item.speedBytesPerSecond = nil
+            item.startedAt = Date()
+            item.finishedAt = nil
+            item.status = .inProgress
+            item.errorMessage = nil
+        }
+        persistDownload(id: id)
+
+        webView.startDownload(using: URLRequest(url: sourceURL)) { [weak self] download in
+            Task { @MainActor in
+                self?.attach(download, toExistingID: id)
+            }
+        }
+    }
+
     func openDownloadedFile(id: BrowserDownload.ID) {
         guard let download = downloads.first(where: { $0.id == id }) else {
             return
@@ -512,6 +586,50 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
         openDownloadedFile(download)
         dismissToast(forDownloadID: id)
+    }
+
+    func refreshHistoryEntries(limit: Int = 500) {
+        Task { [weak self, persistence] in
+            async let entries = persistence.loadHistoryEntries(limit: limit)
+            async let visits = persistence.loadHistoryVisits(limit: limit)
+            async let treeNodes = persistence.loadHistoryTreeNodes(limit: limit)
+            await self?.applyHistoryEntries(entries)
+            await self?.applyHistoryVisits(visits)
+            await self?.applyHistoryTreeNodes(treeNodes)
+        }
+    }
+
+    func refreshAutocompleteData(siteLimit: Int = 500, pageLimit: Int = 1000) {
+        Task { [weak self, persistence] in
+            async let sites = persistence.loadAutocompleteSites(limit: siteLimit)
+            async let pages = persistence.loadAutocompletePages(limit: pageLimit)
+            let loadedSites = await sites
+            let loadedPages = await pages
+            self?.applyAutocompleteSites(loadedSites)
+            self?.applyAutocompletePages(loadedPages)
+        }
+    }
+
+    func openHistoryEntry(_ entry: BrowserHistoryEntry, inNewTab: Bool) {
+        openHistoryURL(entry.url, inNewTab: inNewTab)
+    }
+
+    func openHistoryURL(_ url: URL, inNewTab: Bool) {
+        if inNewTab {
+            newTab(url: url)
+        } else if let activeTab {
+            load(url, in: activeTab)
+        } else {
+            newTab(url: url)
+        }
+    }
+
+    func copyHistoryEntryURL(_ entry: BrowserHistoryEntry) {
+        copyHistoryURL(entry.url)
+    }
+
+    func copyHistoryURL(_ url: URL) {
+        copyToPasteboard(url.absoluteString)
     }
 
     func allowMediaPermissionToast(id: BrowserToast.ID) {
@@ -774,16 +892,21 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     ) -> WKWebView? {
         configuration.userContentController.removeScriptMessageHandler(forName: "browserConsole")
 
-        let webView = BrowserWebView(frame: .zero, configuration: configuration)
-        webView.underPageBackgroundColor = .white
+        let newWebView = BrowserWebView(frame: .zero, configuration: configuration)
+        newWebView.underPageBackgroundColor = .clear
 
-        let tab = makeTab(webView: webView)
-        tabs.append(tab)
-        selectedTabID = tab.id
-        requestMount(for: tab.id)
+        let newTab = makeTab(webView: newWebView)
+        if let sourceTab = tab(for: webView) {
+            historyCursorSourceByTabID[newTab.id] = sourceTab.id
+        } else {
+            historyCursorByTabID[newTab.id] = BrowserHistoryCursor(journeyID: UUID())
+        }
+        tabs.append(newTab)
+        selectedTabID = newTab.id
+        requestMount(for: newTab.id)
         persistSession()
 
-        return webView
+        return newWebView
     }
 
     func webViewDidClose(_ webView: WKWebView) {
@@ -931,7 +1054,8 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         selectedProfileID = Self.selectedProfileID(from: profiles, storedID: startupData.activeProfileID)
         applyMediaPermissionDecisions(startupData.mediaPermissionDecisions)
         downloads = startupData.downloads
-        applyHistorySuggestions(startupData.historySuggestions)
+        applyAutocompleteSites(startupData.autocompleteSites)
+        applyAutocompletePages(startupData.autocompletePages)
         if selectedProfileID != nil {
             applyProfileState(bookmarks: startupData.bookmarks, session: startupData.session)
         } else {
@@ -987,17 +1111,138 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         mediaPermissionDecisionsByOrigin = decisionsByOrigin
     }
 
-    private func applyHistorySuggestions(_ storedSuggestions: [StoredHistorySuggestion]) {
-        historySuggestions = storedSuggestions.compactMap { storedSuggestion in
-            guard BrowserNavigation.isAllowedNavigationURL(storedSuggestion.url) else {
+    private func applyHistoryEntries(_ storedEntries: [StoredHistoryEntry]) {
+        historyEntries = storedEntries.compactMap { storedEntry in
+            guard BrowserNavigation.isAllowedNavigationURL(storedEntry.url) else {
                 return nil
             }
 
-            return BrowserHistorySuggestion(
-                title: storedSuggestion.title,
-                url: storedSuggestion.url,
-                visitedAt: storedSuggestion.visitedAt,
-                favicon: storedSuggestion.faviconData.flatMap(NSImage.init(data:))
+            return BrowserHistoryEntry(
+                title: storedEntry.title,
+                url: storedEntry.url,
+                lastVisitedAt: storedEntry.lastVisitedAt,
+                visitCount: storedEntry.visitCount,
+                favicon: storedEntry.faviconData.flatMap(NSImage.init(data:))
+            )
+        }
+    }
+
+    private func applyHistoryVisits(_ storedVisits: [StoredHistoryVisit]) {
+        historyVisits = storedVisits.compactMap { storedVisit in
+            guard BrowserNavigation.isAllowedNavigationURL(storedVisit.url) else {
+                return nil
+            }
+
+            return BrowserHistoryVisit(
+                id: storedVisit.id,
+                title: storedVisit.title,
+                url: storedVisit.url,
+                visitedAt: storedVisit.visitedAt,
+                favicon: storedVisit.faviconData.flatMap(NSImage.init(data:))
+            )
+        }
+    }
+
+    private func applyHistoryTreeNodes(_ storedNodes: [StoredHistoryTreeNode]) {
+        let validNodes = storedNodes.filter { BrowserNavigation.isAllowedNavigationURL($0.url) }
+        let storedNodeByID = Dictionary(uniqueKeysWithValues: validNodes.map { ($0.id, $0) })
+        let nodeByID = Dictionary(uniqueKeysWithValues: validNodes.map { storedNode in
+            (
+                storedNode.id,
+                BrowserHistoryTreeNode(
+                    id: storedNode.id,
+                    title: storedNode.title,
+                    url: storedNode.url,
+                    visitedAt: storedNode.visitedAt,
+                    favicon: storedNode.faviconData.flatMap(NSImage.init(data:))
+                )
+            )
+        })
+
+        var childrenByParentID: [Int64: [Int64]] = [:]
+        var rootIDsByJourneyID: [UUID: [Int64]] = [:]
+        var nodesByJourneyID: [UUID: [StoredHistoryTreeNode]] = [:]
+
+        for storedNode in validNodes {
+            nodesByJourneyID[storedNode.journeyID, default: []].append(storedNode)
+            if let parentID = storedNode.parentID,
+               nodeByID[parentID] != nil,
+               storedNodeByID[parentID]?.journeyID == storedNode.journeyID {
+                childrenByParentID[parentID, default: []].append(storedNode.id)
+            } else {
+                rootIDsByJourneyID[storedNode.journeyID, default: []].append(storedNode.id)
+            }
+        }
+
+        func buildNode(id: Int64) -> BrowserHistoryTreeNode? {
+            guard var node = nodeByID[id] else {
+                return nil
+            }
+
+            let childIDs = (childrenByParentID[id] ?? []).sorted {
+                (nodeByID[$0]?.visitedAt ?? .distantPast) < (nodeByID[$1]?.visitedAt ?? .distantPast)
+            }
+            node.children = childIDs.compactMap(buildNode)
+            return node
+        }
+
+        historyJourneys = nodesByJourneyID.compactMap { journeyID, storedJourneyNodes in
+            guard let firstVisitedAt = storedJourneyNodes.map(\.visitedAt).min(),
+                  let lastVisitedAt = storedJourneyNodes.map(\.visitedAt).max() else {
+                return nil
+            }
+
+            let rootIDs = (rootIDsByJourneyID[journeyID] ?? []).sorted {
+                (nodeByID[$0]?.visitedAt ?? .distantPast) < (nodeByID[$1]?.visitedAt ?? .distantPast)
+            }
+            let roots = rootIDs.compactMap(buildNode)
+            let title = roots.first?.displayTitle ?? storedJourneyNodes.min { $0.visitedAt < $1.visitedAt }?.title ?? "New Tab"
+
+            return BrowserHistoryJourney(
+                id: journeyID,
+                title: title,
+                startedAt: firstVisitedAt,
+                lastVisitedAt: lastVisitedAt,
+                roots: roots
+            )
+        }
+        .sorted { $0.lastVisitedAt > $1.lastVisitedAt }
+    }
+
+    private func applyAutocompleteSites(_ storedSites: [StoredAutocompleteSite]) {
+        autocompleteSites = storedSites.compactMap { storedSite in
+            guard BrowserNavigation.isAllowedNavigationURL(storedSite.url) else {
+                return nil
+            }
+
+            return BrowserAutocompleteSite(
+                host: storedSite.host,
+                registrableDomain: storedSite.registrableDomain,
+                subdomain: storedSite.subdomain,
+                title: storedSite.title,
+                url: storedSite.url,
+                visitCount: storedSite.visitCount,
+                lastVisitedAt: storedSite.lastVisitedAt,
+                favicon: storedSite.faviconData.flatMap(NSImage.init(data:))
+            )
+        }
+    }
+
+    private func applyAutocompletePages(_ storedPages: [StoredAutocompletePage]) {
+        autocompletePages = storedPages.compactMap { storedPage in
+            guard BrowserNavigation.isAllowedNavigationURL(storedPage.url) else {
+                return nil
+            }
+
+            return BrowserAutocompletePage(
+                url: storedPage.url,
+                title: storedPage.title,
+                host: storedPage.host,
+                registrableDomain: storedPage.registrableDomain,
+                subdomain: storedPage.subdomain,
+                visitCount: storedPage.visitCount,
+                lastVisitedAt: storedPage.lastVisitedAt,
+                favicon: storedPage.faviconData.flatMap(NSImage.init(data:))
             )
         }
     }
@@ -1014,6 +1259,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             .sorted { $0.position < $1.position }
             .map { storedTab in
                 let tab = makeTab(id: storedTab.id, title: storedTab.title, url: storedTab.url)
+                historyCursorByTabID[tab.id] = BrowserHistoryCursor(journeyID: UUID())
                 if let url = storedTab.url {
                     pendingTabLoads[tab.id] = url
                 }
@@ -1030,6 +1276,11 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         mountedTabIDs.removeAll()
         pendingTabLoads.removeAll()
         mountRequestedTabIDs = []
+        historyCursorByTabID.removeAll()
+        historyURLByTabID.removeAll()
+        historyRecordTasksByTabID.values.forEach { $0.cancel() }
+        historyRecordTasksByTabID.removeAll()
+        historyCursorSourceByTabID.removeAll()
         recentlyClosedTabs.removeAll()
         tabs = []
         bookmarks = []
@@ -1065,6 +1316,9 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
         tab.onNavigationDidFinish = { [weak self] tab in
             self?.tabNavigationDidFinish(tab)
+        }
+        tab.onURLDidChange = { [weak self] tab, url in
+            self?.tabURLDidChange(tab, url: url)
         }
         tab.onFaviconDidLoad = { [weak self] tab, favicon in
             self?.tabFaviconDidLoad(tab, favicon: favicon)
@@ -1122,8 +1376,6 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
         let id = UUID()
         let displayName = sourceURL?.lastPathComponent.nonEmpty ?? "Download"
-        activeDownloads[id] = download
-        downloadIDsByDownload[ObjectIdentifier(download)] = id
         downloads.insert(
             BrowserDownload(
                 id: id,
@@ -1139,9 +1391,16 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             ),
             at: 0
         )
-        observeDownloadProgress(download, id: id)
+        attach(download, toExistingID: id)
         showDownloadToast(for: downloads[0])
         persistDownload(id: id)
+    }
+
+    private func attach(_ download: WKDownload, toExistingID id: BrowserDownload.ID) {
+        download.delegate = self
+        activeDownloads[id] = download
+        downloadIDsByDownload[ObjectIdentifier(download)] = id
+        observeDownloadProgress(download, id: id)
     }
 
     func download(
@@ -1182,7 +1441,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         update(download) { item in
             item.status = .failed
             item.finishedAt = Date()
-            item.errorMessage = error.localizedDescription
+            item.errorMessage = Self.isCancellationError(error) ? "Canceled" : error.localizedDescription
         }
         refreshDownloadToast(download)
         persistDownload(download)
@@ -1196,6 +1455,34 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
 
         mutate(&downloads[index])
+    }
+
+    private func updateDownload(id: BrowserDownload.ID, mutate: (inout BrowserDownload) -> Void) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        mutate(&downloads[index])
+        showDownloadToast(for: downloads[index])
+    }
+
+    private func markDownloadCanceled(id: BrowserDownload.ID) {
+        updateDownload(id: id) { item in
+            guard item.status == .inProgress else {
+                return
+            }
+
+            item.status = .failed
+            item.finishedAt = Date()
+            item.speedBytesPerSecond = nil
+            item.errorMessage = "Canceled"
+        }
+        persistDownload(id: id)
+    }
+
+    private static func isCancellationError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
     private func observeDownloadProgress(_ download: WKDownload, id: BrowserDownload.ID) {
@@ -1465,24 +1752,162 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         persistSession()
     }
 
+    private func updateActiveTabZoom(_ update: (BrowserTab) -> Void) {
+        guard let activeTab else {
+            return
+        }
+
+        let previousZoom = activeTab.pageZoom
+        update(activeTab)
+
+        guard activeTab.pageZoom != previousZoom else {
+            return
+        }
+
+        showZoomHUD(for: activeTab)
+    }
+
+    private func showZoomHUD(for tab: BrowserTab) {
+        let hud = BrowserZoomHUD(percentText: tab.pageZoomPercentText)
+        zoomHUDDismissalTask?.cancel()
+        zoomHUD = hud
+
+        zoomHUDDismissalTask = Task { @MainActor [weak self, hudID = hud.id] in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+
+            guard !Task.isCancelled,
+                  self?.zoomHUD?.id == hudID else {
+                return
+            }
+
+            self?.zoomHUD = nil
+        }
+    }
+
     private func tabNavigationDidFinish(_ tab: BrowserTab) {
         persistSession()
+        refreshHistoryMetadataIfNeeded()
+    }
 
-        guard let url = tab.url else {
+    private func tabURLDidChange(_ tab: BrowserTab, url: URL) {
+        persistSession()
+
+        let urlString = url.absoluteString
+        if historyURLByTabID[tab.id] == urlString {
             return
         }
 
         let title = tab.displayTitle
         let tabID = tab.id
-        Task { [weak self, persistence] in
-            let suggestions = await persistence.recordHistoryVisitAndLoadSuggestions(
+        historyURLByTabID[tabID] = urlString
+        enqueueHistoryRecord(tabID: tabID, url: url, title: title)
+    }
+
+    private func refreshHistoryMetadataIfNeeded() {
+        if historyEntries.isEmpty == false || historyVisits.isEmpty == false || historyJourneys.isEmpty == false {
+            refreshHistoryEntries()
+        }
+    }
+
+    private func enqueueHistoryRecord(
+        tabID: BrowserTab.ID,
+        url: URL,
+        title: String
+    ) {
+        let previousTask = historyRecordTasksByTabID[tabID]
+        let task = Task { [weak self, persistence] in
+            await previousTask?.value
+            guard !Task.isCancelled else {
+                return
+            }
+
+            let sourceTask = await MainActor.run { () -> Task<Void, Never>? in
+                guard let self,
+                      let sourceTabID = self.historyCursorSourceByTabID[tabID] else {
+                    return nil
+                }
+
+                return self.historyRecordTasksByTabID[sourceTabID]
+            }
+            await sourceTask?.value
+            guard !Task.isCancelled else {
+                return
+            }
+
+            let treeRelationship = await MainActor.run {
+                self?.adoptPendingHistoryCursorSource(for: tabID)
+                return self?.historyTreeRelationship(for: tabID, url: url)
+            }
+
+            guard let treeRelationship else {
+                await MainActor.run {
+                    self?.refreshHistoryMetadataIfNeeded()
+                }
+                return
+            }
+
+            let visitID = await persistence.recordHistoryVisit(
                 url: url,
                 title: title,
                 tabID: tabID,
-                limit: 80
+                journeyID: treeRelationship.journeyID,
+                parentVisitID: treeRelationship.parentVisitID
             )
-            self?.applyHistorySuggestions(suggestions)
+
+            await MainActor.run {
+                if let visitID {
+                    self?.recordHistoryTreeVisit(visitID, for: tabID, url: url, relationship: treeRelationship)
+                }
+                self?.refreshAutocompleteData()
+                self?.refreshHistoryMetadataIfNeeded()
+            }
         }
+        historyRecordTasksByTabID[tabID] = task
+    }
+
+    private func historyTreeRelationship(
+        for tabID: BrowserTab.ID,
+        url: URL
+    ) -> BrowserPendingHistoryRelationship? {
+        var cursor = historyCursorByTabID[tabID] ?? BrowserHistoryCursor(journeyID: UUID())
+        defer {
+            historyCursorByTabID[tabID] = cursor
+        }
+
+        if cursor.moveToExistingVisit(for: url) {
+            return nil
+        }
+
+        cursor.removeForwardBranch()
+        return BrowserPendingHistoryRelationship(
+            journeyID: cursor.journeyID,
+            parentVisitID: cursor.currentVisitID
+        )
+    }
+
+    private func adoptPendingHistoryCursorSource(for tabID: BrowserTab.ID) {
+        guard let sourceTabID = historyCursorSourceByTabID.removeValue(forKey: tabID) else {
+            return
+        }
+
+        if let sourceCursor = historyCursorByTabID[sourceTabID] {
+            historyCursorByTabID[tabID] = sourceCursor.cursorForChildTab()
+        } else {
+            historyCursorByTabID[tabID] = BrowserHistoryCursor(journeyID: UUID())
+        }
+    }
+
+    private func recordHistoryTreeVisit(
+        _ visitID: Int64,
+        for tabID: BrowserTab.ID,
+        url: URL,
+        relationship: BrowserPendingHistoryRelationship
+    ) {
+        var cursor = historyCursorByTabID[tabID] ?? BrowserHistoryCursor(journeyID: relationship.journeyID)
+        cursor.journeyID = relationship.journeyID
+        cursor.append(visitID, url: url)
+        historyCursorByTabID[tabID] = cursor
+        historyURLByTabID[tabID] = url.absoluteString
     }
 
     private func refreshElementFullscreenState() {
@@ -1550,13 +1975,17 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
 
         Task { [weak self, persistence] in
-            let suggestions = await persistence.saveFaviconAndLoadSuggestions(
+            await persistence.saveFavicon(
                 origin: origin,
                 pageURL: pageURL,
-                imageData: imageData,
-                limit: 80
+                imageData: imageData
             )
-            self?.applyHistorySuggestions(suggestions)
+            await MainActor.run {
+                self?.refreshAutocompleteData()
+                if self?.historyEntries.isEmpty == false || self?.historyVisits.isEmpty == false || self?.historyJourneys.isEmpty == false {
+                    self?.refreshHistoryEntries()
+                }
+            }
         }
     }
 
@@ -1759,6 +2188,63 @@ private struct RecentlyClosedTab {
     let title: String
     let url: URL?
     let position: Int
+}
+
+private struct BrowserPendingHistoryRelationship {
+    let journeyID: UUID
+    let parentVisitID: Int64?
+}
+
+private struct BrowserHistoryCursor {
+    private struct Entry {
+        let visitID: Int64
+        let urlString: String
+    }
+
+    var journeyID: UUID
+    private var path: [Entry] = []
+    private var currentIndex = -1
+
+    init(journeyID: UUID) {
+        self.journeyID = journeyID
+    }
+
+    var currentVisitID: Int64? {
+        guard path.indices.contains(currentIndex) else {
+            return nil
+        }
+
+        return path[currentIndex].visitID
+    }
+
+    mutating func append(_ visitID: Int64, url: URL) {
+        removeForwardBranch()
+        path.append(Entry(visitID: visitID, urlString: url.absoluteString))
+        currentIndex = path.count - 1
+    }
+
+    mutating func moveToExistingVisit(for url: URL) -> Bool {
+        guard let matchingIndex = path.lastIndex(where: { $0.urlString == url.absoluteString }) else {
+            return false
+        }
+
+        currentIndex = matchingIndex
+        return true
+    }
+
+    mutating func removeForwardBranch() {
+        guard currentIndex + 1 < path.count else {
+            return
+        }
+
+        path.removeSubrange((currentIndex + 1)..<path.count)
+    }
+
+    func cursorForChildTab() -> BrowserHistoryCursor {
+        var cursor = self
+        cursor.removeForwardBranch()
+        return cursor
+    }
 }
 
 private struct BrowserMediaPermissionRequest {

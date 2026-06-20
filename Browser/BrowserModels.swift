@@ -1,6 +1,14 @@
 import AppKit
 import Foundation
 
+private func browserDisplayTitle(_ title: String, fallback: @autoclosure () -> String) -> String {
+    title.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? fallback()
+}
+
+private func browserDisplayTitle(_ title: String, url: URL) -> String {
+    browserDisplayTitle(title, fallback: url.host() ?? url.absoluteString)
+}
+
 enum BrowserSearchEngine: String, CaseIterable, Equatable, Sendable {
     case google
     case duckDuckGo
@@ -116,6 +124,18 @@ struct BrowserDownload: Identifiable, Equatable, Sendable {
         return destinationURL?.deletingLastPathComponent().path ?? status.label
     }
 
+    var canCancel: Bool {
+        status == .inProgress
+    }
+
+    var canRetry: Bool {
+        guard status == .failed, let sourceURL else {
+            return false
+        }
+
+        return BrowserNavigation.isAllowedNavigationURL(sourceURL)
+    }
+
     private var inProgressDetailText: String {
         var components: [String] = []
 
@@ -155,7 +175,7 @@ struct BrowserBookmark: Identifiable, Equatable {
     var tabID: BrowserTab.ID?
 
     var displayTitle: String {
-        title.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? url.host() ?? url.absoluteString
+        browserDisplayTitle(title, url: url)
     }
 }
 
@@ -188,20 +208,117 @@ struct BrowserProfile: Identifiable, Equatable, Sendable {
     ]
 
     var displayName: String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "Profile"
+        browserDisplayTitle(name, fallback: "Profile")
     }
 }
 
-struct BrowserHistorySuggestion: Identifiable, Equatable {
+struct BrowserHistoryEntry: Identifiable, Equatable {
     var id: String { url.absoluteString }
 
+    var title: String
+    var url: URL
+    var lastVisitedAt: Date
+    var visitCount: Int
+    var favicon: NSImage?
+
+    var displayTitle: String {
+        browserDisplayTitle(title, url: url)
+    }
+
+    var displayURL: String {
+        BrowserNavigation.displayAddressText(for: url)
+    }
+}
+
+struct BrowserHistoryVisit: Identifiable, Equatable {
+    let id: Int64
     var title: String
     var url: URL
     var visitedAt: Date
     var favicon: NSImage?
 
     var displayTitle: String {
-        title.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? url.host() ?? url.absoluteString
+        browserDisplayTitle(title, url: url)
+    }
+
+    var displayURL: String {
+        BrowserNavigation.displayAddressText(for: url)
+    }
+}
+
+struct BrowserHistoryTreeNode: Identifiable, Equatable {
+    let id: Int64
+    var title: String
+    var url: URL
+    var visitedAt: Date
+    var favicon: NSImage?
+    var children: [BrowserHistoryTreeNode] = []
+
+    var displayTitle: String {
+        browserDisplayTitle(title, url: url)
+    }
+
+    var displayURL: String {
+        BrowserNavigation.displayAddressText(for: url)
+    }
+}
+
+struct BrowserHistoryJourney: Identifiable, Equatable {
+    let id: UUID
+    var title: String
+    var startedAt: Date
+    var lastVisitedAt: Date
+    var roots: [BrowserHistoryTreeNode]
+
+    var displayTitle: String {
+        browserDisplayTitle(title, fallback: "New Tab")
+    }
+}
+
+struct BrowserZoomHUD: Identifiable, Equatable {
+    let id = UUID()
+    let percentText: String
+}
+
+struct BrowserAutocompleteSite: Identifiable, Equatable {
+    var id: String { host }
+
+    var host: String
+    var registrableDomain: String
+    var subdomain: String?
+    var title: String
+    var url: URL
+    var visitCount: Int
+    var lastVisitedAt: Date
+    var favicon: NSImage?
+
+    var displayTitle: String {
+        browserDisplayTitle(title, fallback: host)
+    }
+
+    var displayURL: String {
+        host
+    }
+}
+
+struct BrowserAutocompletePage: Identifiable, Equatable {
+    var id: String { url.absoluteString }
+
+    var url: URL
+    var title: String
+    var host: String
+    var registrableDomain: String
+    var subdomain: String?
+    var visitCount: Int
+    var lastVisitedAt: Date
+    var favicon: NSImage?
+
+    var displayTitle: String {
+        browserDisplayTitle(title, url: url)
+    }
+
+    var displayURL: String {
+        BrowserNavigation.displayAddressText(for: url)
     }
 }
 
@@ -369,9 +486,62 @@ enum OriginSecurityState {
     }
 }
 
+struct BrowserPageFailure: Equatable {
+    let url: URL?
+    let title: String
+    let message: String
+    let detail: String
+    let isCertificateError: Bool
+
+    static func navigationFailure(url: URL?, error: Error, isCertificateError: Bool) -> BrowserPageFailure {
+        let nsError = error as NSError
+        let title = isCertificateError ? "Certificate Error" : "Page Failed to Load"
+        let message = isCertificateError
+            ? "Browser could not verify this page's identity."
+            : error.localizedDescription
+        let detail = "\(nsError.domain) \(nsError.code)"
+
+        return BrowserPageFailure(
+            url: url,
+            title: title,
+            message: message,
+            detail: detail,
+            isCertificateError: isCertificateError
+        )
+    }
+
+    static func certificateFailure(url: URL?) -> BrowserPageFailure {
+        BrowserPageFailure(
+            url: url,
+            title: "Certificate Error",
+            message: "Browser could not verify this page's identity.",
+            detail: "The secure connection was rejected before the page loaded.",
+            isCertificateError: true
+        )
+    }
+
+    static func webContentProcessTerminated(url: URL?) -> BrowserPageFailure {
+        BrowserPageFailure(
+            url: url,
+            title: "Page Stopped Responding",
+            message: "The web content process closed unexpectedly.",
+            detail: "Reload the page to start a fresh web content process.",
+            isCertificateError: false
+        )
+    }
+}
+
 extension String {
     var nonEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var removingWWWPrefix: String {
+        var value = self
+        while value.hasPrefix("www.") {
+            value.removeFirst(4)
+        }
+        return value
     }
 }

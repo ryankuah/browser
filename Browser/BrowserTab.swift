@@ -14,16 +14,23 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     @Published private(set) var canGoForward = false
     @Published private(set) var originSecurityState: OriginSecurityState = .noPage
     @Published private(set) var favicon: NSImage?
+    @Published private(set) var pageFailure: BrowserPageFailure?
+    @Published private(set) var pageZoom: CGFloat = 1.0
 
     var onStateDidChange: ((BrowserTab) -> Void)?
     var onNavigationDidFinish: ((BrowserTab) -> Void)?
+    var onURLDidChange: ((BrowserTab, URL) -> Void)?
     var onFaviconDidLoad: ((BrowserTab, NSImage) -> Void)?
     var onFullscreenStateDidChange: ((BrowserTab) -> Void)?
     var onDownloadDidBegin: ((BrowserTab, WKDownload, URL?) -> Void)?
 
     private var fullscreenObservation: NSKeyValueObservation?
+    private var urlObservation: NSKeyValueObservation?
     private var faviconLoadTask: Task<Void, Never>?
     private var faviconRequestID: UUID?
+    private var lastReportedURLString: String?
+
+    static let zoomLevels: [CGFloat] = [0.50, 0.67, 0.75, 0.90, 1.0, 1.10, 1.25, 1.50, 1.75, 2.0]
 
     var displayTitle: String {
         title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New Tab" : title
@@ -45,6 +52,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         return BrowserNavigation.displayAddressText(for: url)
     }
 
+    var pageZoomPercentText: String {
+        "\(Int((pageZoom * 100).rounded()))%"
+    }
+
     init(
         id: UUID = UUID(),
         webView: BrowserWebView = BrowserWebView(frame: .zero, configuration: BrowserWebView.makeConfiguration()),
@@ -59,7 +70,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         self.url = url
 
         webView.navigationDelegate = self
-        webView.underPageBackgroundColor = .white
+        webView.underPageBackgroundColor = .clear
+        webView.pageZoom = pageZoom
         fullscreenObservation = webView.observe(\.fullscreenState, options: [.new]) { [weak self] _, _ in
             Task { @MainActor in
                 guard let self else {
@@ -67,6 +79,11 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                 }
 
                 self.onFullscreenStateDidChange?(self)
+            }
+        }
+        urlObservation = webView.observe(\.url, options: [.new]) { [weak self] webView, change in
+            Task { @MainActor in
+                await self?.handleObservedURLChange(change.newValue ?? webView.url)
             }
         }
         refreshFromWebView(notify: false)
@@ -89,6 +106,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         title = BrowserNavigation.defaultTitle(for: url)
         isLoading = false
         originSecurityState = BrowserNavigation.originSecurityState(for: url)
+        pageFailure = nil
         clearFavicon()
         onStateDidChange?(self)
     }
@@ -102,6 +120,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         title = BrowserNavigation.defaultTitle(for: url)
         isLoading = true
         originSecurityState = BrowserNavigation.originSecurityState(for: url)
+        pageFailure = nil
         clearFavicon()
         webView.load(URLRequest(url: url))
         refreshFromWebView()
@@ -112,6 +131,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             return
         }
 
+        pageFailure = nil
         webView.goBack()
         refreshFromWebView()
     }
@@ -121,6 +141,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             return
         }
 
+        pageFailure = nil
         webView.goForward()
         refreshFromWebView()
     }
@@ -128,39 +149,123 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func reloadOrStop() {
         if webView.isLoading {
             webView.stopLoading()
+        } else if pageFailure != nil {
+            retryPageFailure()
         } else {
+            pageFailure = nil
             webView.reload()
         }
 
         refreshFromWebView()
     }
 
+    func retryPageFailure() {
+        guard let retryURL = pageFailure?.url ?? webView.url ?? url else {
+            return
+        }
+
+        load(retryURL)
+    }
+
+    func setPageZoom(_ zoom: CGFloat) {
+        let resolvedZoom = Self.nearestZoomLevel(to: zoom)
+        guard pageZoom != resolvedZoom else {
+            return
+        }
+
+        pageZoom = resolvedZoom
+        webView.pageZoom = resolvedZoom
+        onStateDidChange?(self)
+    }
+
+    func zoomIn() {
+        let currentIndex = Self.zoomLevelIndex(for: pageZoom)
+        setPageZoom(Self.zoomLevels[min(currentIndex + 1, Self.zoomLevels.count - 1)])
+    }
+
+    func zoomOut() {
+        let currentIndex = Self.zoomLevelIndex(for: pageZoom)
+        setPageZoom(Self.zoomLevels[max(currentIndex - 1, 0)])
+    }
+
+    func resetZoom() {
+        setPageZoom(1.0)
+    }
+
+    func findInPage(_ query: String, backwards: Bool, completion: @escaping (Bool) -> Void) {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            clearFindSelection()
+            completion(true)
+            return
+        }
+
+        let configuration = WKFindConfiguration()
+        configuration.backwards = backwards
+        configuration.caseSensitive = false
+        configuration.wraps = true
+
+        Task { @MainActor [weak self] in
+            guard let self else {
+                completion(false)
+                return
+            }
+
+            let result = try? await self.webView.find(trimmedQuery, configuration: configuration)
+            completion(result?.matchFound == true)
+        }
+    }
+
+    func clearFindSelection() {
+        webView.evaluateJavaScript("window.getSelection && window.getSelection().removeAllRanges()", completionHandler: nil)
+    }
+
+    private func handleObservedURLChange(_ observedURL: URL?) async {
+        guard let observedURL,
+              BrowserNavigation.isAllowedNavigationURL(observedURL) else {
+            return
+        }
+
+        let urlString = observedURL.absoluteString
+        guard lastReportedURLString != urlString else {
+            return
+        }
+
+        lastReportedURLString = urlString
+        refreshFromWebView()
+        onURLDidChange?(self, observedURL)
+    }
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         originSecurityState = BrowserNavigation.originSecurityState(for: webView.url ?? url)
+        pageFailure = nil
         refreshFromWebView()
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        pageFailure = nil
         refreshFromWebView()
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pageFailure = nil
         refreshFromWebView()
         refreshFavicon()
         onNavigationDidFinish?(self)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        updateOriginSecurityState(after: error)
+        handleNavigationFailure(error)
         refreshFromWebView()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        updateOriginSecurityState(after: error)
+        handleNavigationFailure(error)
         refreshFromWebView()
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        pageFailure = .webContentProcessTerminated(url: webView.url ?? url)
         refreshFromWebView()
     }
 
@@ -262,6 +367,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
 
         guard let serverTrust = challenge.protectionSpace.serverTrust else {
             originSecurityState = .certificateError
+            pageFailure = .certificateFailure(url: webView.url ?? url)
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
@@ -269,6 +375,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         var trustError: CFError?
         guard SecTrustEvaluateWithError(serverTrust, &trustError) else {
             originSecurityState = .certificateError
+            pageFailure = .certificateFailure(url: webView.url ?? url)
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
@@ -411,7 +518,46 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         return components.url
     }
 
-    private func updateOriginSecurityState(after error: Error) {
+    private static func zoomLevelIndex(for zoom: CGFloat) -> Int {
+        let nearest = nearestZoomLevel(to: zoom)
+        return zoomLevels.firstIndex(of: nearest) ?? zoomLevels.firstIndex(of: 1.0) ?? 0
+    }
+
+    private static func nearestZoomLevel(to zoom: CGFloat) -> CGFloat {
+        zoomLevels.min { lhs, rhs in
+            abs(lhs - zoom) < abs(rhs - zoom)
+        } ?? 1.0
+    }
+
+    private func handleNavigationFailure(_ error: Error) {
+        guard !Self.shouldIgnoreNavigationFailure(error) else {
+            return
+        }
+
+        let isCertificateError = updateOriginSecurityState(after: error)
+        pageFailure = .navigationFailure(
+            url: webView.url ?? url,
+            error: error,
+            isCertificateError: isCertificateError
+        )
+    }
+
+    private static func shouldIgnoreNavigationFailure(_ error: Error) -> Bool {
+        let nsError = error as NSError
+
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
+            return true
+        }
+
+        if nsError.domain == "WebKitErrorDomain", nsError.code == 102 {
+            return true
+        }
+
+        return false
+    }
+
+    @discardableResult
+    private func updateOriginSecurityState(after error: Error) -> Bool {
         let nsError = error as NSError
         let certificateErrorCodes: Set<Int> = [
             NSURLErrorServerCertificateHasBadDate,
@@ -425,6 +571,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
 
         if nsError.domain == NSURLErrorDomain, certificateErrorCodes.contains(nsError.code) {
             originSecurityState = .certificateError
+            return true
         }
+
+        return false
     }
 }

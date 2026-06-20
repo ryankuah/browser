@@ -62,7 +62,7 @@ final class BrowserWebContainerView: NSView {
         wantsLayer = true
         layer?.masksToBounds = true
         layer?.cornerCurve = .continuous
-        layer?.backgroundColor = NSColor.white.cgColor
+        layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     @available(*, unavailable)
@@ -295,7 +295,6 @@ final class BrowserWebView: WKWebView {
         }
 
         isPointerShieldUpdatePending = true
-        let rects = normalizedOcclusionRects()
 
         DispatchQueue.main.async { [weak self] in
             guard let self else {
@@ -303,6 +302,7 @@ final class BrowserWebView: WKWebView {
             }
 
             self.isPointerShieldUpdatePending = false
+            let rects = self.normalizedOcclusionRects()
             self.evaluateJavaScript(Self.pointerShieldScript(rects: rects), completionHandler: nil)
         }
     }

@@ -24,8 +24,6 @@ final class BrowserUpdateController: NSObject, ObservableObject, SPUUserDriver {
     private var updater: SPUUpdater!
     private var updateChoiceReply: ((SPUUserUpdateChoice) -> Void)?
     private var readyToInstallReply: ((SPUUserUpdateChoice) -> Void)?
-    private var expectedContentLength: UInt64 = 0
-    private var receivedContentLength: UInt64 = 0
 
     var isUpdateButtonVisible: Bool {
         switch state {
@@ -148,16 +146,9 @@ final class BrowserUpdateController: NSObject, ObservableObject, SPUUserDriver {
         state = .downloading
     }
 
-    func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {
-        self.expectedContentLength = expectedContentLength
-        receivedContentLength = 0
-        state = .downloading
-    }
+    func showDownloadDidReceiveExpectedContentLength(_ _: UInt64) {}
 
-    func showDownloadDidReceiveData(ofLength length: UInt64) {
-        receivedContentLength += length
-        state = .downloading
-    }
+    func showDownloadDidReceiveData(ofLength _: UInt64) {}
 
     func showDownloadDidStartExtractingUpdate() {
         state = .extracting
@@ -240,6 +231,12 @@ private struct BrowserCommands: Commands {
             }
             .keyboardShortcut("r", modifiers: [.command])
             .disabled(browserCommandActions == nil)
+
+            Button("Show History") {
+                browserCommandActions?.showHistory()
+            }
+            .keyboardShortcut("y", modifiers: [.command])
+            .disabled(browserCommandActions == nil)
         }
 
         CommandGroup(after: .appInfo) {
@@ -251,6 +248,46 @@ private struct BrowserCommands: Commands {
                 browserCommandActions?.toggleConsole()
             }
             .keyboardShortcut("j", modifiers: [.command, .option])
+            .disabled(browserCommandActions == nil)
+        }
+
+        CommandMenu("Page") {
+            Button("Find in Page") {
+                browserCommandActions?.showFind()
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+            .disabled(browserCommandActions == nil)
+
+            Button("Find Next") {
+                browserCommandActions?.findNext()
+            }
+            .keyboardShortcut("g", modifiers: [.command])
+            .disabled(browserCommandActions == nil)
+
+            Button("Find Previous") {
+                browserCommandActions?.findPrevious()
+            }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+            .disabled(browserCommandActions == nil)
+
+            Divider()
+
+            Button("Zoom In") {
+                browserCommandActions?.zoomIn()
+            }
+            .keyboardShortcut("+", modifiers: [.command])
+            .disabled(browserCommandActions == nil)
+
+            Button("Zoom Out") {
+                browserCommandActions?.zoomOut()
+            }
+            .keyboardShortcut("-", modifiers: [.command])
+            .disabled(browserCommandActions == nil)
+
+            Button("Actual Size") {
+                browserCommandActions?.resetZoom()
+            }
+            .keyboardShortcut("0", modifiers: [.command])
             .disabled(browserCommandActions == nil)
         }
 
@@ -299,6 +336,13 @@ struct BrowserCommandActions {
     var copyPageLink: () -> Void
     var reload: () -> Void
     var toggleConsole: () -> Void
+    var showFind: () -> Void
+    var findNext: () -> Void
+    var findPrevious: () -> Void
+    var showHistory: () -> Void
+    var zoomIn: () -> Void
+    var zoomOut: () -> Void
+    var resetZoom: () -> Void
     var showDebugDownloadToast: () -> Void
     var showDebugMicrophonePermissionToast: () -> Void
     var showDebugVideoPermissionToast: () -> Void
