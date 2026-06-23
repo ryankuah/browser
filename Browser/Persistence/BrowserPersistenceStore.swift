@@ -4,6 +4,7 @@ struct BrowserStartupData: Sendable {
     var settings: [String: String] = [:]
     var profiles: [StoredBrowserProfile] = []
     var activeProfileID: UUID?
+    var userScripts: [StoredBrowserUserScript] = []
     var mediaPermissionDecisions: [StoredMediaPermissionDecision] = []
     var bookmarks: [StoredBrowserBookmark] = []
     var autocompleteSites: [StoredAutocompleteSite] = []
@@ -21,6 +22,7 @@ actor BrowserPersistenceStore {
         data.settings = load(default: [:]) { try $0.loadSettings() }
         data.profiles = load(default: []) { try $0.loadProfiles() }
         data.activeProfileID = load(default: UUID?.none) { try $0.loadActiveProfileID() }
+        data.userScripts = load(default: []) { try $0.loadUserScripts() }
         data.mediaPermissionDecisions = load(default: []) { try $0.loadMediaPermissionDecisions() }
         data.autocompleteSites = load(default: []) { try $0.loadAutocompleteSites(limit: 500) }
         data.autocompletePages = load(default: []) { try $0.loadAutocompletePages(limit: 1000) }
@@ -56,6 +58,21 @@ actor BrowserPersistenceStore {
     func saveMediaPermissionDecision(origin: String, deviceKind: String, isAllowed: Bool) {
         save("Browser media permission decision save failed") {
             try $0.saveMediaPermissionDecision(origin: origin, deviceKind: deviceKind, isAllowed: isAllowed)
+        }
+    }
+
+    func saveUserScript(_ script: StoredBrowserUserScript) {
+        save("Browser user script save failed") {
+            try $0.saveUserScript(script)
+        }
+    }
+
+    func deleteUserScriptAndReindex(id: UUID, remainingScripts: [StoredBrowserUserScript]) {
+        save("Browser user script delete failed") { database in
+            try database.deleteUserScript(id: id)
+            for script in remainingScripts {
+                try database.saveUserScript(script)
+            }
         }
     }
 

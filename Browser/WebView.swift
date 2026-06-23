@@ -237,13 +237,17 @@ final class BrowserWebView: WKWebView {
         super.cursorUpdate(with: event)
     }
 
-    static func makeConfiguration() -> WKWebViewConfiguration {
+    static func makeConfiguration(userScripts: [BrowserUserScript] = []) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
-        configure(configuration)
+        configure(configuration, userScripts: userScripts)
         return configuration
     }
 
-    static func configure(_ configuration: WKWebViewConfiguration, consoleMessageHandler: WKScriptMessageHandler? = nil) {
+    static func configure(
+        _ configuration: WKWebViewConfiguration,
+        consoleMessageHandler: WKScriptMessageHandler? = nil,
+        userScripts: [BrowserUserScript] = []
+    ) {
         configuration.applicationNameForUserAgent = Self.safariUserAgentSuffix
         configuration.preferences.isElementFullscreenEnabled = true
 
@@ -252,22 +256,27 @@ final class BrowserWebView: WKWebView {
         configuration.defaultWebpagePreferences = preferences
 
         let userContentController = configuration.userContentController
-        userContentController.addUserScript(WKUserScript(
-            source: youtubePlaybackSpeedHotkeyScript,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        ))
-
-        guard let consoleMessageHandler else {
-            return
+        if let consoleMessageHandler {
+            userContentController.add(consoleMessageHandler, name: "browserConsole")
         }
+        installConfiguredUserScripts(
+            on: userContentController,
+            includeConsoleBridge: consoleMessageHandler != nil,
+            userScripts: userScripts
+        )
+    }
 
-        userContentController.add(consoleMessageHandler, name: "browserConsole")
-        userContentController.addUserScript(WKUserScript(
-            source: consoleBridgeScript,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        ))
+    static func replaceConfiguredUserScripts(
+        on userContentController: WKUserContentController,
+        includeConsoleBridge: Bool,
+        userScripts: [BrowserUserScript]
+    ) {
+        userContentController.removeAllUserScripts()
+        installConfiguredUserScripts(
+            on: userContentController,
+            includeConsoleBridge: includeConsoleBridge,
+            userScripts: userScripts
+        )
     }
 
     private func isEventInOccludedRegion(_ event: NSEvent) -> Bool {
@@ -281,12 +290,23 @@ final class BrowserWebView: WKWebView {
     private func shouldHandleAsWebContentKey(_ event: NSEvent) -> Bool {
         guard event.type == .keyDown,
               window?.firstResponder === self,
-              !(event.charactersIgnoringModifiers?.isEmpty ?? true) else {
+              let characters = event.charactersIgnoringModifiers,
+              !characters.isEmpty else {
             return false
         }
 
         let modifiers = event.modifierFlags.intersection([.command, .option, .control])
-        return modifiers.isEmpty
+        guard modifiers.isEmpty else {
+            return false
+        }
+
+        return !Self.containsAppKitFunctionKey(characters)
+    }
+
+    private static func containsAppKitFunctionKey(_ characters: String) -> Bool {
+        characters.unicodeScalars.contains { scalar in
+            scalar.value >= 0xF700 && scalar.value <= 0xF8FF
+        }
     }
 
     private func updatePointerShield() {
@@ -394,6 +414,117 @@ final class BrowserWebView: WKWebView {
             .replacingOccurrences(of: "RECTS", with: rectJSON)
     }
 
+    private static func installConfiguredUserScripts(
+        on userContentController: WKUserContentController,
+        includeConsoleBridge: Bool,
+        userScripts: [BrowserUserScript]
+    ) {
+        if includeConsoleBridge {
+            userContentController.addUserScript(WKUserScript(
+                source: consoleBridgeScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            ))
+        }
+
+        for userScript in userScripts where userScript.isRunnable {
+            userContentController.addUserScript(WKUserScript(
+                source: wrappedUserScriptSource(for: userScript),
+                injectionTime: webKitInjectionTime(for: userScript.injectionTime),
+                forMainFrameOnly: userScript.forMainFrameOnly
+            ))
+        }
+    }
+
+    private static func webKitInjectionTime(for injectionTime: BrowserUserScriptInjectionTime) -> WKUserScriptInjectionTime {
+        switch injectionTime {
+        case .documentStart:
+            return .atDocumentStart
+        case .documentEnd:
+            return .atDocumentEnd
+        }
+    }
+
+    private static func wrappedUserScriptSource(for userScript: BrowserUserScript) -> String {
+        #"""
+        (() => {
+          const scriptName = __BROWSER_USER_SCRIPT_NAME__;
+          const patterns = __BROWSER_USER_SCRIPT_PATTERNS__;
+          const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const wildcardToRegExp = value => new RegExp(`^${String(value).split("*").map(escapeRegExp).join(".*")}$`);
+          const matchesHost = (pattern, host) => {
+            const normalizedPattern = String(pattern || "*").toLowerCase();
+            const normalizedHost = String(host || "").toLowerCase();
+            if (normalizedPattern === "*" || normalizedPattern === "") return true;
+            if (normalizedPattern.startsWith("*.")) {
+              const base = normalizedPattern.slice(2);
+              return normalizedHost === base || normalizedHost.endsWith(`.${base}`);
+            }
+            return wildcardToRegExp(normalizedPattern).test(normalizedHost);
+          };
+          const matchesPattern = pattern => {
+            const normalizedPattern = String(pattern || "").trim();
+            if (!normalizedPattern || normalizedPattern === "*" || normalizedPattern === "<all_urls>") return true;
+
+            const url = new URL(location.href);
+            const match = normalizedPattern.match(/^(\*|https?|file):\/\/([^/]*)(\/.*)?$/i);
+            if (!match) {
+              if (!normalizedPattern.includes("/") && !normalizedPattern.includes(":")) {
+                return matchesHost(normalizedPattern, url.hostname);
+              }
+              return wildcardToRegExp(normalizedPattern).test(location.href);
+            }
+
+            const expectedScheme = match[1].toLowerCase();
+            const actualScheme = url.protocol.replace(/:$/, "").toLowerCase();
+            if (expectedScheme !== "*" && expectedScheme !== actualScheme) return false;
+
+            const hostPattern = match[2] || "*";
+            if (actualScheme !== "file" && !matchesHost(hostPattern, url.hostname)) return false;
+
+            const pathPattern = match[3] || "/*";
+            return wildcardToRegExp(pathPattern).test(`${url.pathname}${url.search}${url.hash}`);
+          };
+
+          if (!patterns.some(matchesPattern)) return;
+
+          try {
+        __BROWSER_USER_SCRIPT_SOURCE__
+          } catch (error) {
+            console.error(`[Browser user script: ${scriptName}]`, error);
+          }
+        })();
+        """#
+        .replacingOccurrences(of: "__BROWSER_USER_SCRIPT_NAME__", with: javascriptStringLiteral(userScript.displayName))
+        .replacingOccurrences(of: "__BROWSER_USER_SCRIPT_PATTERNS__", with: javascriptArrayLiteral(userScript.normalizedMatchPatternLines))
+        .replacingOccurrences(of: "__BROWSER_USER_SCRIPT_SOURCE__", with: indentedUserScriptSource(userScript.source))
+    }
+
+    private static func javascriptStringLiteral(_ value: String) -> String {
+        guard let data = try? JSONEncoder().encode(value),
+              let literal = String(data: data, encoding: .utf8) else {
+            return "\"\""
+        }
+
+        return literal
+    }
+
+    private static func javascriptArrayLiteral(_ values: [String]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: values),
+              let literal = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+
+        return literal
+    }
+
+    private static func indentedUserScriptSource(_ source: String) -> String {
+        source
+            .components(separatedBy: .newlines)
+            .map { "            \($0)" }
+            .joined(separator: "\n")
+    }
+
     private static let consoleBridgeScript = #"""
     (() => {
       if (window.__browserConsoleBridgeInstalled) return;
@@ -453,140 +584,6 @@ final class BrowserWebView: WKWebView {
       diagnostics("document-start");
       window.addEventListener("DOMContentLoaded", () => diagnostics("dom-content-loaded"), { once: true });
       window.addEventListener("load", () => diagnostics("window-load"), { once: true });
-    })();
-    """#
-
-    private static let youtubePlaybackSpeedHotkeyScript = #"""
-    (() => {
-      if (window.__browserYouTubePlaybackSpeedHotkeysInstalled) return;
-      window.__browserYouTubePlaybackSpeedHotkeysInstalled = true;
-
-      const isYouTubePage = () => {
-        const host = location.hostname.toLowerCase();
-        return host === "youtube.com" || host.endsWith(".youtube.com");
-      };
-
-      const isEditableTarget = target => {
-        if (!target || target === document || target === window) return false;
-        const element = target.nodeType === Node.ELEMENT_NODE ? target : target.parentElement;
-        return Boolean(element?.closest([
-          "input",
-          "textarea",
-          "select",
-          "[contenteditable]",
-          "[role='textbox']"
-        ].join(",")));
-      };
-
-      const clampPlaybackSpeed = speed => Math.min(16, Math.max(0.25, speed));
-
-      const formatPlaybackSpeed = speed => {
-        const rounded = Math.round(speed * 100) / 100;
-        return Number.isInteger(rounded) ? `${rounded}x` : `${rounded.toFixed(2).replace(/0$/, "")}x`;
-      };
-
-      const getPreferredVideo = () => {
-        const videos = Array.from(document.querySelectorAll("video"));
-        return (
-          videos.find(candidate => !candidate.paused && !candidate.ended) ||
-          videos.find(candidate => candidate.readyState > 0) ||
-          videos[0]
-        );
-      };
-
-      const showPlaybackSpeedPopup = speed => {
-        const video = getPreferredVideo();
-        if (!video) return;
-
-        let popup = document.getElementById("browser-youtube-playback-speed-popup");
-        if (!popup) {
-          popup = document.createElement("div");
-          popup.id = "browser-youtube-playback-speed-popup";
-          popup.setAttribute("aria-live", "polite");
-          Object.assign(popup.style, {
-            position: "fixed",
-            zIndex: "2147483647",
-            padding: "8px 14px",
-            borderRadius: "999px",
-            background: "rgba(8, 8, 10, 0.72)",
-            border: "1px solid rgba(255, 255, 255, 0.18)",
-            boxShadow: "0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18)",
-            backdropFilter: "blur(18px) saturate(160%)",
-            WebkitBackdropFilter: "blur(18px) saturate(160%)",
-            color: "white",
-            font: "600 14px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif",
-            letterSpacing: "0",
-            lineHeight: "1",
-            pointerEvents: "none",
-            opacity: "0",
-            transform: "translate(-50%, -8px) scale(0.98)",
-            transition: "opacity 140ms ease, transform 140ms ease"
-          });
-          document.documentElement.appendChild(popup);
-        }
-
-        const rect = video.getBoundingClientRect();
-        popup.textContent = formatPlaybackSpeed(speed);
-        popup.style.left = `${rect.left + rect.width / 2}px`;
-        popup.style.top = `${Math.max(12, rect.top + 18)}px`;
-        popup.style.opacity = "1";
-        popup.style.transform = "translate(-50%, 0) scale(1)";
-
-        clearTimeout(window.__browserYouTubePlaybackSpeedPopupTimer);
-        window.__browserYouTubePlaybackSpeedPopupTimer = setTimeout(() => {
-          popup.style.opacity = "0";
-          popup.style.transform = "translate(-50%, -8px) scale(0.98)";
-        }, 900);
-      };
-
-      const setPlaybackSpeed = speed => {
-        const video = getPreferredVideo();
-
-        if (!video) return;
-
-        const nextSpeed = clampPlaybackSpeed(speed);
-        video.defaultPlaybackRate = nextSpeed;
-        video.playbackRate = nextSpeed;
-        showPlaybackSpeedPopup(nextSpeed);
-      };
-
-      const adjustPlaybackSpeed = delta => {
-        const video = getPreferredVideo();
-        const currentSpeed = video?.playbackRate || 1;
-        setPlaybackSpeed(currentSpeed + delta);
-      };
-
-      window.addEventListener("keydown", event => {
-        if (!isYouTubePage()) return;
-        if (event.defaultPrevented || event.repeat) return;
-        if (event.metaKey || event.ctrlKey || event.altKey) return;
-        if (isEditableTarget(event.target)) return;
-
-        switch (event.key.toLowerCase()) {
-        case "s":
-          event.preventDefault();
-          event.stopPropagation();
-          adjustPlaybackSpeed(-0.25);
-          break;
-        case "d":
-          event.preventDefault();
-          event.stopPropagation();
-          adjustPlaybackSpeed(0.25);
-          break;
-        case "g":
-          event.preventDefault();
-          event.stopPropagation();
-          setPlaybackSpeed(3);
-          break;
-        case "h":
-          event.preventDefault();
-          event.stopPropagation();
-          setPlaybackSpeed(1);
-          break;
-        default:
-          break;
-        }
-      }, true);
     })();
     """#
 

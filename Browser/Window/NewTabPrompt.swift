@@ -15,6 +15,7 @@ struct NewTabPrompt: View {
     @FocusState private var isFocused: Bool
     @State private var addressText = ""
     @State private var selectedSuggestionID: String?
+    @State private var selectedSuggestionSource: NewTabPromptSuggestionSelectionSource?
     @State private var arrowKeyMonitor: Any?
 
     private var trimmedAddress: String {
@@ -81,9 +82,11 @@ struct NewTabPrompt: View {
                                     mode: suggestionMode,
                                     onHighlight: {
                                         selectedSuggestionID = suggestion.id
+                                        selectedSuggestionSource = .pointer
                                     },
                                     onSelect: {
                                         selectedSuggestionID = suggestion.id
+                                        selectedSuggestionSource = .pointer
                                         activate(suggestion)
                                     }
                                 )
@@ -118,6 +121,7 @@ struct NewTabPrompt: View {
         }
         .onChange(of: addressText) { _, _ in
             selectedSuggestionID = nil
+            selectedSuggestionSource = nil
         }
         .onChange(of: suggestions.map(\.id)) { _, ids in
             if let selectedSuggestionID, ids.contains(selectedSuggestionID) {
@@ -125,6 +129,7 @@ struct NewTabPrompt: View {
             }
 
             selectedSuggestionID = nil
+            selectedSuggestionSource = nil
         }
         .onMoveCommand { direction in
             moveSelection(direction)
@@ -137,6 +142,7 @@ struct NewTabPrompt: View {
                     selectFocusedText()
                 }
                 selectedSuggestionID = nil
+                selectedSuggestionSource = nil
             }
             installArrowKeyMonitorIfNeeded()
         }
@@ -184,11 +190,13 @@ struct NewTabPrompt: View {
         }
         .onTapGesture {
             selectedSuggestionID = nil
+            selectedSuggestionSource = nil
             isFocused = true
         }
         .onHover { isHovered in
             if isHovered {
                 selectedSuggestionID = nil
+                selectedSuggestionSource = nil
             }
         }
     }
@@ -196,17 +204,12 @@ struct NewTabPrompt: View {
     private func submit() {
         let address = trimmedAddress
 
-        if let selectedSuggestion {
+        if selectedSuggestionSource == .keyboard, let selectedSuggestion {
             activate(selectedSuggestion)
             return
         }
 
         guard !address.isEmpty else {
-            return
-        }
-
-        if let suggestion = suggestions.first(where: { $0.canInlineComplete }) {
-            activate(suggestion)
             return
         }
 
@@ -239,6 +242,7 @@ struct NewTabPrompt: View {
     private func moveSelection(_ direction: MoveCommandDirection) {
         guard !suggestions.isEmpty else {
             selectedSuggestionID = nil
+            selectedSuggestionSource = nil
             return
         }
 
@@ -249,17 +253,21 @@ struct NewTabPrompt: View {
         switch direction {
         case .down:
             selectedSuggestionID = suggestions[((currentIndex ?? -1) + 1) % suggestions.count].id
+            selectedSuggestionSource = .keyboard
         case .up:
             guard let currentIndex else {
                 selectedSuggestionID = suggestions.last?.id
+                selectedSuggestionSource = .keyboard
                 return
             }
 
             if currentIndex == 0 {
                 selectedSuggestionID = nil
+                selectedSuggestionSource = nil
                 isFocused = true
             } else {
                 selectedSuggestionID = suggestions[currentIndex - 1].id
+                selectedSuggestionSource = .keyboard
             }
         default:
             break
@@ -314,6 +322,7 @@ struct NewTabPrompt: View {
 
         addressText = suggestion.completionText
         selectedSuggestionID = nil
+        selectedSuggestionSource = nil
         isFocused = true
     }
 
@@ -453,6 +462,12 @@ struct NewTabPrompt: View {
     private func normalizedHost(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
+}
+
+@MainActor
+private enum NewTabPromptSuggestionSelectionSource {
+    case keyboard
+    case pointer
 }
 
 @MainActor

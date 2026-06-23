@@ -44,6 +44,53 @@ enum BrowserSearchEngine: String, CaseIterable, Equatable, Sendable {
     }
 }
 
+enum BrowserUserScriptInjectionTime: String, CaseIterable, Equatable, Sendable {
+    case documentStart
+    case documentEnd
+
+    var label: String {
+        switch self {
+        case .documentStart:
+            return "Document Start"
+        case .documentEnd:
+            return "Document End"
+        }
+    }
+}
+
+struct BrowserUserScript: Identifiable, Equatable, Sendable {
+    let id: UUID
+    var name: String
+    var matchPatterns: String
+    var source: String
+    var isEnabled: Bool
+    var injectionTime: BrowserUserScriptInjectionTime
+    var forMainFrameOnly: Bool
+    var position: Int
+
+    static let defaultMatchPatterns = "<all_urls>"
+    static let defaultSource = """
+    // JavaScript runs on pages matched above.
+    """
+
+    var displayName: String {
+        browserDisplayTitle(name, fallback: "User Script")
+    }
+
+    var normalizedMatchPatternLines: [String] {
+        matchPatterns
+            .components(separatedBy: CharacterSet(charactersIn: "\n,"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    var isRunnable: Bool {
+        isEnabled &&
+        !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !normalizedMatchPatternLines.isEmpty
+    }
+}
+
 enum BrowserDownloadStatus: Equatable, Sendable {
     case inProgress
     case finished

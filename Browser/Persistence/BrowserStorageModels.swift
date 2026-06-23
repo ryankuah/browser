@@ -87,6 +87,17 @@ struct StoredMediaPermissionDecision: Sendable {
     let isAllowed: Bool
 }
 
+struct StoredBrowserUserScript: Sendable {
+    let id: UUID
+    let position: Int
+    let name: String
+    let matchPatterns: String
+    let source: String
+    let isEnabled: Bool
+    let injectionTime: String
+    let forMainFrameOnly: Bool
+}
+
 enum BrowserDatabaseError: LocalizedError {
     case openFailed(String)
     case sqliteFailure(String)

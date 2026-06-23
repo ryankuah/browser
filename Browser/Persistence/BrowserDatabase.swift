@@ -638,6 +638,86 @@ final class BrowserDatabase {
         }
     }
 
+    func loadUserScripts() throws -> [StoredBrowserUserScript] {
+        try withStatement(
+            """
+            SELECT id, position, name, match_patterns, source, is_enabled, injection_time, for_main_frame_only
+            FROM user_scripts
+            ORDER BY position ASC
+            """
+        ) { statement in
+            var scripts: [StoredBrowserUserScript] = []
+            while try statement.step() == SQLite.row {
+                guard let rawID = statement.text(at: 0),
+                      let id = UUID(uuidString: rawID) else {
+                    continue
+                }
+
+                scripts.append(StoredBrowserUserScript(
+                    id: id,
+                    position: Int(statement.int64(at: 1)),
+                    name: statement.text(at: 2) ?? "User Script",
+                    matchPatterns: statement.text(at: 3) ?? BrowserUserScript.defaultMatchPatterns,
+                    source: statement.text(at: 4) ?? "",
+                    isEnabled: statement.int64(at: 5) != 0,
+                    injectionTime: statement.text(at: 6) ?? BrowserUserScriptInjectionTime.documentEnd.rawValue,
+                    forMainFrameOnly: statement.int64(at: 7) != 0
+                ))
+            }
+
+            return scripts
+        }
+    }
+
+    func saveUserScript(_ script: StoredBrowserUserScript) throws {
+        try withStatement(
+            """
+            INSERT INTO user_scripts (
+                id,
+                position,
+                name,
+                match_patterns,
+                source,
+                is_enabled,
+                injection_time,
+                for_main_frame_only,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                position = excluded.position,
+                name = excluded.name,
+                match_patterns = excluded.match_patterns,
+                source = excluded.source,
+                is_enabled = excluded.is_enabled,
+                injection_time = excluded.injection_time,
+                for_main_frame_only = excluded.for_main_frame_only,
+                updated_at = excluded.updated_at
+            """
+        ) { statement in
+            let now = Date().timeIntervalSince1970
+            try statement.bind(script.id.uuidString, at: 1)
+            try statement.bind(Int64(script.position), at: 2)
+            try statement.bind(script.name, at: 3)
+            try statement.bind(script.matchPatterns, at: 4)
+            try statement.bind(script.source, at: 5)
+            try statement.bind(script.isEnabled ? Int64(1) : Int64(0), at: 6)
+            try statement.bind(script.injectionTime, at: 7)
+            try statement.bind(script.forMainFrameOnly ? Int64(1) : Int64(0), at: 8)
+            try statement.bind(now, at: 9)
+            try statement.bind(now, at: 10)
+            try statement.stepDone()
+        }
+    }
+
+    func deleteUserScript(id: UUID) throws {
+        try withStatement("DELETE FROM user_scripts WHERE id = ?") { statement in
+            try statement.bind(id.uuidString, at: 1)
+            try statement.stepDone()
+        }
+    }
+
     func loadMediaPermissionDecisions() throws -> [StoredMediaPermissionDecision] {
         try withStatement(
             """
@@ -1054,6 +1134,30 @@ final class BrowserDatabase {
                 try execute("CREATE INDEX IF NOT EXISTS history_visits_journey_idx ON history_visits(history_journey_id, visited_at DESC)")
                 try execute("CREATE INDEX IF NOT EXISTS history_visits_parent_idx ON history_visits(history_parent_visit_id)")
                 try execute("PRAGMA user_version = 8")
+            }
+        }
+
+        if version < 9 {
+            try transaction {
+                try execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_scripts (
+                        id TEXT PRIMARY KEY,
+                        position INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        match_patterns TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        is_enabled INTEGER NOT NULL,
+                        injection_time TEXT NOT NULL,
+                        for_main_frame_only INTEGER NOT NULL,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL
+                    )
+                    """
+                )
+
+                try execute("CREATE INDEX IF NOT EXISTS user_scripts_position_idx ON user_scripts(position)")
+                try execute("PRAGMA user_version = 9")
             }
         }
     }

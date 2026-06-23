@@ -26,6 +26,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     @Published private(set) var hasLoadedStartupData = false
     @Published private(set) var bezelStyle: BrowserBezelStyle = .liquidGlass
     @Published private(set) var searchEngine: BrowserSearchEngine = .google
+    @Published private(set) var userScripts: [BrowserUserScript] = []
     @Published private var mountRequestedTabIDs: Set<BrowserTab.ID> = []
     @Published private var mediaPermissionDecisionsByOrigin: [String: [BrowserMediaDeviceKind: Bool]] = [:]
     @Published private(set) var isElementFullscreenActive = false
@@ -662,6 +663,106 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         }
     }
 
+    @discardableResult
+    func createUserScript(
+        name: String,
+        matchPatterns: String,
+        source: String,
+        isEnabled: Bool,
+        injectionTime: BrowserUserScriptInjectionTime,
+        forMainFrameOnly: Bool
+    ) -> BrowserUserScript.ID? {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSource = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPatterns = Self.normalizedUserScriptMatchPatterns(matchPatterns)
+        guard !trimmedName.isEmpty,
+              !trimmedSource.isEmpty,
+              !normalizedPatterns.isEmpty else {
+            return nil
+        }
+
+        let script = BrowserUserScript(
+            id: UUID(),
+            name: trimmedName,
+            matchPatterns: normalizedPatterns,
+            source: source,
+            isEnabled: isEnabled,
+            injectionTime: injectionTime,
+            forMainFrameOnly: forMainFrameOnly,
+            position: userScripts.count
+        )
+        userScripts.append(script)
+        persistUserScript(script)
+        applyUserScriptsToOpenTabs(reloadPages: true)
+        return script.id
+    }
+
+    func updateUserScript(
+        id: BrowserUserScript.ID,
+        name: String,
+        matchPatterns: String,
+        source: String,
+        isEnabled: Bool,
+        injectionTime: BrowserUserScriptInjectionTime,
+        forMainFrameOnly: Bool
+    ) {
+        guard let index = userScripts.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSource = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPatterns = Self.normalizedUserScriptMatchPatterns(matchPatterns)
+        guard !trimmedName.isEmpty,
+              !trimmedSource.isEmpty,
+              !normalizedPatterns.isEmpty else {
+            return
+        }
+
+        userScripts[index].name = trimmedName
+        userScripts[index].matchPatterns = normalizedPatterns
+        userScripts[index].source = source
+        userScripts[index].isEnabled = isEnabled
+        userScripts[index].injectionTime = injectionTime
+        userScripts[index].forMainFrameOnly = forMainFrameOnly
+        let script = userScripts[index]
+
+        persistUserScript(script)
+        applyUserScriptsToOpenTabs(reloadPages: true)
+    }
+
+    func setUserScriptEnabled(id: BrowserUserScript.ID, isEnabled: Bool) {
+        guard let index = userScripts.firstIndex(where: { $0.id == id }),
+              userScripts[index].isEnabled != isEnabled else {
+            return
+        }
+
+        userScripts[index].isEnabled = isEnabled
+        let script = userScripts[index]
+        persistUserScript(script)
+        applyUserScriptsToOpenTabs(reloadPages: true)
+    }
+
+    func deleteUserScript(id: BrowserUserScript.ID) {
+        guard let index = userScripts.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        userScripts.remove(at: index)
+        for scriptIndex in userScripts.indices {
+            userScripts[scriptIndex].position = scriptIndex
+        }
+
+        let remainingScripts = userScripts
+        Task { [persistence] in
+            await persistence.deleteUserScriptAndReindex(
+                id: id,
+                remainingScripts: remainingScripts.map(Self.storedUserScript(from:))
+            )
+        }
+        applyUserScriptsToOpenTabs(reloadPages: true)
+    }
+
     func createProfile(name: String, colorHex: String) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
@@ -1052,6 +1153,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
             )
         }
         selectedProfileID = Self.selectedProfileID(from: profiles, storedID: startupData.activeProfileID)
+        applyUserScripts(startupData.userScripts)
         applyMediaPermissionDecisions(startupData.mediaPermissionDecisions)
         downloads = startupData.downloads
         applyAutocompleteSites(startupData.autocompleteSites)
@@ -1092,6 +1194,21 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         if let rawSearchEngine = settings["searchEngine"],
            let storedSearchEngine = BrowserSearchEngine(rawValue: rawSearchEngine) {
             searchEngine = storedSearchEngine
+        }
+    }
+
+    private func applyUserScripts(_ storedScripts: [StoredBrowserUserScript]) {
+        userScripts = storedScripts.map { storedScript in
+            BrowserUserScript(
+                id: storedScript.id,
+                name: storedScript.name,
+                matchPatterns: storedScript.matchPatterns,
+                source: storedScript.source,
+                isEnabled: storedScript.isEnabled,
+                injectionTime: BrowserUserScriptInjectionTime(rawValue: storedScript.injectionTime) ?? .documentEnd,
+                forMainFrameOnly: storedScript.forMainFrameOnly,
+                position: storedScript.position
+            )
         }
     }
 
@@ -1297,8 +1414,13 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         let resolvedWebView: BrowserWebView
         if let webView {
             resolvedWebView = webView
+            BrowserWebView.replaceConfiguredUserScripts(
+                on: webView.configuration.userContentController,
+                includeConsoleBridge: false,
+                userScripts: userScripts
+            )
         } else {
-            let configuration = BrowserWebView.makeConfiguration()
+            let configuration = WKWebViewConfiguration()
             configureWebViewConfiguration(configuration)
             resolvedWebView = BrowserWebView(frame: .zero, configuration: configuration)
         }
@@ -1334,7 +1456,11 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     private func configureWebViewConfiguration(_ configuration: WKWebViewConfiguration) {
-        BrowserWebView.configure(configuration, consoleMessageHandler: BrowserConsoleScriptMessageHandler(browser: self))
+        BrowserWebView.configure(
+            configuration,
+            consoleMessageHandler: BrowserConsoleScriptMessageHandler(browser: self),
+            userScripts: userScripts
+        )
     }
 
     private static func selectedProfileID(from profiles: [BrowserProfile], storedID: UUID?) -> UUID? {
@@ -1350,6 +1476,47 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let prefixedValue = value.hasPrefix("#") ? value : "#\(value)"
         return NSColor(hexString: prefixedValue)?.hexString ?? BrowserProfile.defaultColorHex
+    }
+
+    private static func normalizedUserScriptMatchPatterns(_ rawValue: String) -> String {
+        rawValue
+            .components(separatedBy: CharacterSet(charactersIn: "\n,"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    nonisolated private static func storedUserScript(from script: BrowserUserScript) -> StoredBrowserUserScript {
+        StoredBrowserUserScript(
+            id: script.id,
+            position: script.position,
+            name: script.name,
+            matchPatterns: script.matchPatterns,
+            source: script.source,
+            isEnabled: script.isEnabled,
+            injectionTime: script.injectionTime.rawValue,
+            forMainFrameOnly: script.forMainFrameOnly
+        )
+    }
+
+    private func persistUserScript(_ script: BrowserUserScript) {
+        Task { [persistence] in
+            await persistence.saveUserScript(Self.storedUserScript(from: script))
+        }
+    }
+
+    private func applyUserScriptsToOpenTabs(reloadPages: Bool) {
+        for tab in tabs {
+            BrowserWebView.replaceConfiguredUserScripts(
+                on: tab.webView.configuration.userContentController,
+                includeConsoleBridge: true,
+                userScripts: userScripts
+            )
+
+            if reloadPages, tab.webView.url != nil {
+                tab.webView.reload()
+            }
+        }
     }
 
     private func appendConsoleMessage(level: String, message: String, url: String?, source: String) {
