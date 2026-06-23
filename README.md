@@ -23,7 +23,7 @@ The release flow requires:
 Create a signed, notarized, tagged GitHub release:
 
 ```sh
-NOTARYTOOL_PROFILE=browser-notary scripts/release.sh patch
+scripts/release.sh patch
 ```
 
 The argument can be `patch`, `minor`, `major`, or an explicit version like `1.3.0`.

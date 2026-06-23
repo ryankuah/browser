@@ -46,7 +46,6 @@
 		2B336D652C3D4C8000B63C2B /* BrowserApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserApp.swift; sourceTree = "<group>"; };
 		2B336D662C3D4C8000B63C2B /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebView.swift; sourceTree = "<group>"; };
 		2B336D6F2C3D4C8200B63C2B /* WindowAccessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowAccessor.swift; sourceTree = "<group>"; };
-		2B336D692C3D4C8000B63C2B /* Browser.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Browser.entitlements; sourceTree = "<group>"; };
 		2B336D952C3D5EA000B63C2B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		2B336D712C3D4C8300B63C2B /* BrowserWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserWindowView.swift; sourceTree = "<group>"; };
 		2B336D732C3D4C8300B63C2B /* BrowserSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSidebar.swift; sourceTree = "<group>"; };
@@ -122,7 +121,6 @@
 				2B336D7C2C3D4C8300B63C2B /* Window */,
 				2B336D902C3D4C8800B63C2B /* Assets.xcassets */,
 				2B336D952C3D5EA000B63C2B /* Info.plist */,
-				2B336D692C3D4C8000B63C2B /* Browser.entitlements */,
 			);
 			path = Browser;
 			sourceTree = "<group>";
@@ -403,7 +401,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Browser/Browser.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 5;
@@ -429,7 +426,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Browser/Browser.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 5;

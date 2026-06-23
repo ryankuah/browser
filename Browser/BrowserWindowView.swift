@@ -639,6 +639,9 @@ struct BrowserWindowView: View {
         }
 
         scheduleSidebarClose {
+            guard !isSidebarHovered else {
+                return
+            }
             isLeftZoneHovered = false
         }
     }
@@ -647,13 +650,15 @@ struct BrowserWindowView: View {
         if isHovered {
             cancelPendingSidebarClose()
             withAnimation(.easeInOut(duration: 0.16)) {
-                isLeftZoneHovered = false
                 isSidebarHovered = true
             }
             return
         }
 
         scheduleSidebarClose {
+            guard !isLeftZoneHovered else {
+                return
+            }
             isSidebarHovered = false
         }
     }

@@ -9,9 +9,10 @@ DERIVED_DATA="$ROOT_DIR/build/DerivedData"
 RELEASE_DIR="$ROOT_DIR/build/release"
 DMG_STAGING_DIR="$ROOT_DIR/build/dmg-staging"
 DMG_VERIFY_MOUNT_DIR="$ROOT_DIR/build/dmg-verify-mount"
+DMG_LAYOUT_MOUNT_DIR="$ROOT_DIR/build/dmg-layout-mount"
 SPARKLE_SIGN_UPDATE="${SPARKLE_SIGN_UPDATE:-$ROOT_DIR/build/sparkle-tools/bin/sign_update}"
 REPO_URL="${REPO_URL:-https://github.com/ryankuah/browser}"
-NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-}"
+NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-browser-notary}"
 NOTARIZE="${NOTARIZE:-1}"
 DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-}"
 ATTACHED_DMG_DEVICE=""
@@ -21,6 +22,7 @@ cleanup() {
     hdiutil detach "$ATTACHED_DMG_DEVICE" -quiet || true
   fi
   rm -rf "$DMG_VERIFY_MOUNT_DIR"
+  rm -rf "$DMG_LAYOUT_MOUNT_DIR"
 }
 trap cleanup EXIT
 
@@ -57,7 +59,7 @@ Create one first, for example:
     --password app-specific-password
 
 Then rerun:
-  NOTARYTOOL_PROFILE=browser-notary scripts/package_release.sh
+  scripts/package_release.sh
 
 For a local unsigned-by-Gatekeeper test only, bypass notarization with:
   NOTARIZE=0 scripts/package_release.sh
@@ -78,6 +80,7 @@ BUILD_NUMBER="$(
 APP_PATH="$DERIVED_DATA/Build/Products/$CONFIGURATION/Browser.app"
 DMG_NAME="Browser-$VERSION.dmg"
 DMG_PATH="$RELEASE_DIR/$DMG_NAME"
+DMG_TEMP_PATH="$RELEASE_DIR/Browser-$VERSION.rw.dmg"
 APPCAST_PATH="$RELEASE_DIR/appcast.xml"
 SPARKLE_FRAMEWORK="$APP_PATH/Contents/Frameworks/Sparkle.framework"
 
@@ -92,6 +95,125 @@ verify_app_for_distribution() {
 
   verify_app_signature "$app_path"
   spctl --assess --type execute --verbose=4 "$app_path"
+}
+
+create_dmg_background() {
+  local background_path="$1"
+
+  command -v python3 >/dev/null 2>&1 || {
+    echo "Missing required command for DMG background generation: python3" >&2
+    exit 1
+  }
+
+  python3 - "$background_path" <<'PYTHON'
+import binascii
+import math
+import os
+import struct
+import sys
+import zlib
+
+output_path = sys.argv[1]
+width, height = 660, 400
+pixels = bytearray()
+
+def blend(dst, src, alpha):
+    return tuple(round(dst[i] * (1 - alpha) + src[i] * alpha) for i in range(3))
+
+def rounded_rect_alpha(x, y, left, top, right, bottom, radius):
+    if x < left or x >= right or y < top or y >= bottom:
+        return 0
+    cx = min(max(x, left + radius), right - radius - 1)
+    cy = min(max(y, top + radius), bottom - radius - 1)
+    distance = math.hypot(x - cx, y - cy)
+    return max(0, min(1, radius + 0.5 - distance))
+
+def circle_alpha(x, y, cx, cy, radius):
+    distance = math.hypot(x - cx, y - cy)
+    return max(0, min(1, radius + 0.5 - distance))
+
+def segment_alpha(x, y, x1, y1, x2, y2, radius):
+    dx, dy = x2 - x1, y2 - y1
+    length_squared = dx * dx + dy * dy
+    if length_squared == 0:
+        return circle_alpha(x, y, x1, y1, radius)
+    t = max(0, min(1, ((x - x1) * dx + (y - y1) * dy) / length_squared))
+    px, py = x1 + t * dx, y1 + t * dy
+    distance = math.hypot(x - px, y - py)
+    return max(0, min(1, radius + 0.5 - distance))
+
+for y in range(height):
+    for x in range(width):
+        base = (244, 248, 251)
+        shade = int(10 * y / height)
+        color = (max(0, base[0] - shade), max(0, base[1] - shade), max(0, base[2] - shade))
+
+        panel = rounded_rect_alpha(x, y, 28, 28, 632, 372, 28)
+        if panel:
+            color = blend(color, (255, 255, 255), 0.72 * panel)
+
+        for cx, cy in ((190, 252), (470, 252)):
+            glow = circle_alpha(x, y, cx, cy, 116)
+            if glow:
+                color = blend(color, (226, 235, 247), 0.22 * glow)
+
+        divider = segment_alpha(x, y, 72, 120, 588, 120, 0.8)
+        if divider:
+            color = blend(color, (190, 198, 207), 0.38 * divider)
+
+        for line in ((274, 252, 386, 252), (366, 234, 386, 252), (366, 270, 386, 252)):
+            arrow = segment_alpha(x, y, *line, 2.4)
+            if arrow:
+                color = blend(color, (92, 105, 122), 0.66 * arrow)
+
+        pixels.extend(color)
+
+def chunk(kind, data):
+    body = kind + data
+    return struct.pack(">I", len(data)) + body + struct.pack(">I", binascii.crc32(body) & 0xFFFFFFFF)
+
+scanlines = b"".join(b"\x00" + pixels[row * width * 3:(row + 1) * width * 3] for row in range(height))
+png = (
+    b"\x89PNG\r\n\x1a\n"
+    + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    + chunk(b"IDAT", zlib.compress(scanlines, 9))
+    + chunk(b"IEND", b"")
+)
+
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+with open(output_path, "wb") as output:
+    output.write(png)
+PYTHON
+}
+
+set_dmg_finder_layout() {
+  local volume_name="$1"
+  local mount_dir="$2"
+  local background_path="$mount_dir/.background/background.png"
+
+  /usr/bin/osascript <<OSA
+tell application "Finder"
+  tell disk "$volume_name"
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set bounds of container window to {100, 100, 760, 500}
+    set theViewOptions to the icon view options of container window
+    set arrangement of theViewOptions to not arranged
+    set icon size of theViewOptions to 112
+    set text size of theViewOptions to 12
+    set background picture of theViewOptions to POSIX file "$background_path"
+    set position of item "Browser.app" of container window to {190, 252}
+    set position of item "Applications" of container window to {470, 252}
+    close
+    open
+    update without registering applications
+    delay 1
+    close
+  end tell
+end tell
+OSA
 }
 
 xcodebuild \
@@ -121,22 +243,49 @@ codesign --force \
   --sign "$DEVELOPER_ID_APPLICATION" \
   --options runtime \
   --timestamp \
-  --entitlements "$ROOT_DIR/Browser/Browser.entitlements" \
   "$APP_PATH"
 verify_app_signature "$APP_PATH"
 
-rm -f "$DMG_PATH"
+rm -f "$DMG_PATH" "$DMG_TEMP_PATH"
 rm -rf "$DMG_STAGING_DIR"
-mkdir -p "$DMG_STAGING_DIR"
+mkdir -p "$DMG_STAGING_DIR/.background"
 cp -R "$APP_PATH" "$DMG_STAGING_DIR/"
 ln -s /Applications "$DMG_STAGING_DIR/Applications"
+create_dmg_background "$DMG_STAGING_DIR/.background/background.png"
 
 hdiutil create \
   -volname "Browser" \
   -srcfolder "$DMG_STAGING_DIR" \
   -ov \
+  -format UDRW \
+  -fs HFS+ \
+  "$DMG_TEMP_PATH"
+
+rm -rf "$DMG_LAYOUT_MOUNT_DIR"
+mkdir -p "$DMG_LAYOUT_MOUNT_DIR"
+ATTACHED_DMG_DEVICE="$(
+  hdiutil attach "$DMG_TEMP_PATH" \
+    -readwrite \
+    -noverify \
+    -nobrowse \
+    -mountpoint "$DMG_LAYOUT_MOUNT_DIR" |
+    awk '/\/dev\// {print $1; exit}'
+)"
+[[ -n "$ATTACHED_DMG_DEVICE" ]] || {
+  echo "Failed to attach temporary DMG for layout." >&2
+  exit 1
+}
+set_dmg_finder_layout "Browser" "$DMG_LAYOUT_MOUNT_DIR"
+sync
+hdiutil detach "$ATTACHED_DMG_DEVICE" -quiet
+ATTACHED_DMG_DEVICE=""
+rmdir "$DMG_LAYOUT_MOUNT_DIR"
+
+hdiutil convert "$DMG_TEMP_PATH" \
   -format UDZO \
-  "$DMG_PATH"
+  -imagekey zlib-level=9 \
+  -o "$DMG_PATH"
+rm -f "$DMG_TEMP_PATH"
 
 codesign --force --sign "$DEVELOPER_ID_APPLICATION" --timestamp "$DMG_PATH"
 
