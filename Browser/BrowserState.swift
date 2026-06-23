@@ -28,6 +28,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     @Published private(set) var searchEngine: BrowserSearchEngine = .google
     @Published private(set) var userScripts: [BrowserUserScript] = []
     @Published private var mountRequestedTabIDs: Set<BrowserTab.ID> = []
+    @Published private var tabStateRevision = 0
     @Published private var mediaPermissionDecisionsByOrigin: [String: [BrowserMediaDeviceKind: Bool]] = [:]
     @Published private(set) var isElementFullscreenActive = false
 
@@ -1915,7 +1916,8 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         mountRequestedTabIDs = tabIDs
     }
 
-    private func tabStateDidChange(_ tab: BrowserTab) {
+    private func tabStateDidChange(_: BrowserTab) {
+        tabStateRevision += 1
         persistSession()
     }
 

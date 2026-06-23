@@ -47,6 +47,40 @@ private final class PassthroughHoverView: NSView {
     }
 }
 
+private struct BrowserContentView: View {
+    @ObservedObject var tab: BrowserTab
+
+    let shouldMountWebView: Bool
+    let webCornerRadius: CGFloat
+    let occlusionRects: [CGRect]
+    let onWebViewMounted: () -> Void
+    let onRetryFailure: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.white
+                .allowsHitTesting(false)
+
+            if let failure = tab.pageFailure {
+                BrowserFailureView(
+                    failure: failure,
+                    onRetry: onRetryFailure
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
+            } else if shouldMountWebView {
+                WebView(
+                    webView: tab.webView,
+                    cornerRadius: webCornerRadius,
+                    occlusionRects: occlusionRects,
+                    onMount: onWebViewMounted
+                )
+                .id(tab.id)
+            }
+        }
+    }
+}
+
 struct BrowserWindowView: View {
     @StateObject private var browser = BrowserState()
     @StateObject private var windowReference = WindowReference()
@@ -98,6 +132,7 @@ struct BrowserWindowView: View {
                 height: max(proxy.size.height - webOrigin.y - contentInset, 0)
             )
             let sidebarOverlayWidth = min(sidebarWidth, max(webSize.width, 0))
+            let sidebarOverlayEdgeWidth = sidebarOverlayWidth + contentInset
             ZStack(alignment: .topLeading) {
                 BrowserChromeBackground(
                     bezelStyle: browser.bezelStyle,
@@ -120,38 +155,27 @@ struct BrowserWindowView: View {
                         )
                 }
 
-                ZStack(alignment: .topLeading) {
-                    Color.clear
-                        .allowsHitTesting(false)
-
-                    if let activeTab = browser.activeTab, browser.shouldMountWebView(for: activeTab) {
-                        WebView(
-                            webView: activeTab.webView,
-                            cornerRadius: webCornerRadius,
+                Group {
+                    if let activeTab = browser.activeTab {
+                        BrowserContentView(
+                            tab: activeTab,
+                            shouldMountWebView: browser.shouldMountWebView(for: activeTab),
+                            webCornerRadius: webCornerRadius,
                             occlusionRects: webViewOcclusionRects(
                                 rootRects: webViewOcclusionRootRects,
                                 webOrigin: webOrigin,
                                 webSize: webSize
                             ),
-                            onMount: {
+                            onWebViewMounted: {
                                 browser.webViewDidMount(for: activeTab.id)
-                            }
-                        )
-                        .id(activeTab.id)
-                    }
-
-                    if let activeTab = browser.activeTab,
-                       let failure = activeTab.pageFailure {
-                        BrowserFailureView(
-                            failure: failure,
-                            bezelStyle: browser.bezelStyle,
-                            profileColor: browser.profileNSColor,
-                            onRetry: {
+                            },
+                            onRetryFailure: {
                                 browser.retryActivePageFailure()
                             }
                         )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .transition(.opacity)
+                        .id(activeTab.id)
+                    } else {
+                        Color.white
                     }
                 }
                 .frame(width: webSize.width, height: webSize.height, alignment: .topLeading)
@@ -160,9 +184,9 @@ struct BrowserWindowView: View {
                 .animation(.easeInOut(duration: 0.16), value: isSidebarVisible)
 
                 if isSidebarVisible {
-                    sidebarOverlay(width: sidebarOverlayWidth, height: webSize.height)
-                        .offset(x: webOrigin.x, y: webOrigin.y)
-                        .zIndex(3)
+                    sidebarOverlay(width: sidebarOverlayEdgeWidth, height: webSize.height)
+                        .offset(x: 0, y: webOrigin.y)
+                        .zIndex(4)
                 }
 
                 if !browser.isElementFullscreenActive {
@@ -639,9 +663,6 @@ struct BrowserWindowView: View {
         }
 
         scheduleSidebarClose {
-            guard !isSidebarHovered else {
-                return
-            }
             isLeftZoneHovered = false
         }
     }
@@ -650,15 +671,13 @@ struct BrowserWindowView: View {
         if isHovered {
             cancelPendingSidebarClose()
             withAnimation(.easeInOut(duration: 0.16)) {
+                isLeftZoneHovered = false
                 isSidebarHovered = true
             }
             return
         }
 
         scheduleSidebarClose {
-            guard !isLeftZoneHovered else {
-                return
-            }
             isSidebarHovered = false
         }
     }

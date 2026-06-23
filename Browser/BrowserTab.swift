@@ -29,6 +29,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     private var faviconLoadTask: Task<Void, Never>?
     private var faviconRequestID: UUID?
     private var lastReportedURLString: String?
+    private var pendingNavigationURL: URL?
 
     static let zoomLevels: [CGFloat] = [0.50, 0.67, 0.75, 0.90, 1.0, 1.10, 1.25, 1.50, 1.75, 2.0]
 
@@ -117,6 +118,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         }
 
         self.url = url
+        pendingNavigationURL = url
         title = BrowserNavigation.defaultTitle(for: url)
         isLoading = true
         originSecurityState = BrowserNavigation.originSecurityState(for: url)
@@ -237,7 +239,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        originSecurityState = BrowserNavigation.originSecurityState(for: webView.url ?? url)
+        originSecurityState = BrowserNavigation.originSecurityState(for: pendingNavigationURL ?? webView.url ?? url)
         pageFailure = nil
         refreshFromWebView()
     }
@@ -245,11 +247,13 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         pageFailure = nil
         refreshFromWebView()
+        pendingNavigationURL = nil
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         pageFailure = nil
         refreshFromWebView()
+        pendingNavigationURL = nil
         refreshFavicon()
         onNavigationDidFinish?(self)
     }
@@ -280,6 +284,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         }
 
         if shouldReloadWithDesktopUserAgent(navigationAction) {
+            pendingNavigationURL = url
             webView.load(Self.desktopUserAgentRequest(from: navigationAction.request))
             decisionHandler(.cancel)
             return
@@ -293,6 +298,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         guard BrowserNavigation.isAllowedNavigationURL(url) else {
             decisionHandler(.cancel)
             return
+        }
+
+        if navigationAction.targetFrame?.isMainFrame == true {
+            pendingNavigationURL = url
         }
 
         decisionHandler(.allow)
@@ -385,7 +394,9 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     private func refreshFromWebView(notify: Bool = true) {
-        url = webView.url ?? url
+        if pageFailure == nil {
+            url = pendingNavigationURL ?? webView.url ?? url
+        }
 
         if let webTitle = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines), !webTitle.isEmpty {
             title = webTitle
@@ -534,9 +545,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             return
         }
 
+        let failedURL = pendingNavigationURL ?? webView.url ?? url
+        pendingNavigationURL = nil
+        url = failedURL
         let isCertificateError = updateOriginSecurityState(after: error)
         pageFailure = .navigationFailure(
-            url: webView.url ?? url,
+            url: failedURL,
             error: error,
             isCertificateError: isCertificateError
         )

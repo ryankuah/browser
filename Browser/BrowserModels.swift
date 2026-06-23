@@ -542,10 +542,17 @@ struct BrowserPageFailure: Equatable {
 
     static func navigationFailure(url: URL?, error: Error, isCertificateError: Bool) -> BrowserPageFailure {
         let nsError = error as NSError
-        let title = isCertificateError ? "Certificate Error" : "Page Failed to Load"
-        let message = isCertificateError
-            ? "Browser could not verify this page's identity."
-            : error.localizedDescription
+        let title: String
+        let message: String
+
+        if isCertificateError {
+            title = "Certificate Error"
+            message = "Browser could not verify this page's identity."
+        } else {
+            let copy = navigationFailureCopy(for: nsError, url: url)
+            title = copy.title
+            message = copy.message
+        }
         let detail = "\(nsError.domain) \(nsError.code)"
 
         return BrowserPageFailure(
@@ -555,6 +562,54 @@ struct BrowserPageFailure: Equatable {
             detail: detail,
             isCertificateError: isCertificateError
         )
+    }
+
+    private static func navigationFailureCopy(for error: NSError, url: URL?) -> (title: String, message: String) {
+        guard error.domain == NSURLErrorDomain else {
+            return ("Page Failed to Load", error.localizedDescription)
+        }
+
+        switch error.code {
+        case NSURLErrorCannotConnectToHost:
+            if let url, BrowserNavigation.isLocalURL(url) {
+                return (
+                    "Can't Connect to Localhost",
+                    "Nothing is responding at this address. Check that your local server is running and that the port is correct."
+                )
+            }
+
+            return (
+                "Can't Connect",
+                "The server is not accepting connections right now."
+            )
+        case NSURLErrorNotConnectedToInternet:
+            return (
+                "No Internet Connection",
+                "Your Mac appears to be offline."
+            )
+        case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed:
+            return (
+                "Server Not Found",
+                "Browser could not find the server for this address."
+            )
+        case NSURLErrorTimedOut:
+            return (
+                "Connection Timed Out",
+                "The server took too long to respond."
+            )
+        case NSURLErrorSecureConnectionFailed:
+            return (
+                "Secure Connection Failed",
+                "Browser could not establish a secure connection to this page."
+            )
+        case NSURLErrorAppTransportSecurityRequiresSecureConnection:
+            return (
+                "HTTP Blocked",
+                "This page requires a secure HTTPS connection."
+            )
+        default:
+            return ("Page Failed to Load", error.localizedDescription)
+        }
     }
 
     static func certificateFailure(url: URL?) -> BrowserPageFailure {

@@ -127,6 +127,7 @@ struct ProfileCreationPanel: View {
                     .font(.system(size: 11, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -135,6 +136,8 @@ struct ProfileCreationPanel: View {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(Color.primary.opacity(0.12))
             }
+            .contentShape(Rectangle())
+            .cursor(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .arrow : .pointingHand)
         }
         .padding(12)
         .background {
@@ -161,13 +164,17 @@ private struct ProfilePresetColorRow: View {
     let colorHexes: [String]
     @Binding var selectedColorHex: String
 
+    private let columns = [
+        GridItem(.adaptive(minimum: 22, maximum: 22), spacing: 7)
+    ]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: 7) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 7) {
                 ForEach(colorHexes, id: \.self) { colorHex in
                     Button {
                         selectedColorHex = colorHex
@@ -193,6 +200,7 @@ private struct ProfilePresetColorRow: View {
                     .help(colorHex)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

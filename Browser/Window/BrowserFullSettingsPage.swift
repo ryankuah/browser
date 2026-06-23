@@ -469,6 +469,7 @@ private struct FullSettingsActionButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())
         .background {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(isHovered ? Color.primary.opacity(0.13) : Color.primary.opacity(0.09))

@@ -193,27 +193,30 @@ set_dmg_finder_layout() {
 
   /usr/bin/osascript <<OSA
 tell application "Finder"
-  tell disk "$volume_name"
-    open
-    set current view of container window to icon view
-    set toolbar visible of container window to false
-    set statusbar visible of container window to false
-    set bounds of container window to {100, 100, 760, 500}
-    set theViewOptions to the icon view options of container window
-    set arrangement of theViewOptions to not arranged
-    set icon size of theViewOptions to 112
-    set text size of theViewOptions to 12
-    set background picture of theViewOptions to POSIX file "$background_path"
-    set position of item "Browser.app" of container window to {190, 252}
-    set position of item "Applications" of container window to {470, 252}
-    close
-    open
-    update without registering applications
-    delay 1
-    close
-  end tell
+  activate
+  open POSIX file "$mount_dir"
+  delay 1
+  set targetWindow to Finder window 1
+  set current view of targetWindow to icon view
+  set toolbar visible of targetWindow to false
+  set statusbar visible of targetWindow to false
+  set bounds of targetWindow to {100, 100, 760, 500}
+  set theViewOptions to the icon view options of targetWindow
+  set arrangement of theViewOptions to not arranged
+  set icon size of theViewOptions to 112
+  set text size of theViewOptions to 12
+  set background picture of theViewOptions to POSIX file "$background_path"
+  set position of item "Browser.app" of targetWindow to {190, 252}
+  set position of item "Applications" of targetWindow to {470, 252}
+  delay 2
+  close targetWindow
 end tell
 OSA
+
+  [[ -f "$mount_dir/.DS_Store" ]] || {
+    echo "Finder did not persist DMG layout metadata." >&2
+    exit 1
+  }
 }
 
 xcodebuild \

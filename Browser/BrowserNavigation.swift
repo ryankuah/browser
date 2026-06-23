@@ -16,15 +16,25 @@ enum BrowserNavigation {
         }
 
         if !trimmed.contains(where: \.isWhitespace),
-           let components = URLComponents(string: "https://\(trimmed)"),
-           let host = components.host,
-           host.contains(".") || host == "localhost",
-           let url = components.url,
+           let parsedComponents = URLComponents(string: "https://\(trimmed)"),
+           let host = parsedComponents.host,
+           host.contains(".") || isLocalHost(host),
+           let url = urlForSchemlessAddress(trimmed, host: host),
            isAllowedNavigationURL(url) {
             return url
         }
 
         return searchEngine.searchURL(for: trimmed)
+    }
+
+    private static func urlForSchemlessAddress(_ address: String, host: String) -> URL? {
+        let scheme = isLocalHost(host) ? "http" : "https"
+
+        guard let components = URLComponents(string: "\(scheme)://\(address)") else {
+            return nil
+        }
+
+        return components.url
     }
 
     static func isAllowedNavigationURL(_ url: URL) -> Bool {
@@ -99,12 +109,21 @@ enum BrowserNavigation {
         return displayText
     }
 
-    private static func isLocalURL(_ url: URL) -> Bool {
+    static func isLocalURL(_ url: URL) -> Bool {
         guard let host = url.host()?.lowercased() else {
             return false
         }
 
-        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+        return isLocalHost(host)
+    }
+
+    private static func isLocalHost(_ host: String) -> Bool {
+        switch host.lowercased() {
+        case "localhost", "127.0.0.1", "::1", "0.0.0.0":
+            return true
+        default:
+            return false
+        }
     }
 
     private static func normalizedBookmarkPage(_ url: URL) -> String {

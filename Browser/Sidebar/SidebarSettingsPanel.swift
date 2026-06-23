@@ -24,156 +24,160 @@ struct BrowserSettingsPanel: View {
             Divider()
                 .opacity(0.45)
 
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Text("Profiles")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            Text("Profiles")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+
+                            Spacer()
+
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.14)) {
+                                    isAddingProfile.toggle()
+                                }
+                            } label: {
+                                Image(systemName: isAddingProfile ? "minus" : "plus")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .frame(width: 24, height: 22)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(isAddingProfile ? "Cancel Profile" : "Add Profile")
+                            .help(isAddingProfile ? "Cancel" : "Add Profile")
+                        }
+
+                        if isAddingProfile {
+                            ProfileCreationPanel(
+                                title: "New Profile",
+                                defaultName: "",
+                                defaultColor: NSColor(hexString: BrowserProfile.defaultColorHex) ?? .systemBlue,
+                                profileColor: profileColor
+                            ) { name, colorHex in
+                                browser.createProfile(name: name, colorHex: colorHex)
+                                withAnimation(.easeInOut(duration: 0.14)) {
+                                    isAddingProfile = false
+                                }
+                            }
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+
+                        if let editingProfile = editingProfile {
+                            ProfileCreationPanel(
+                                title: "Edit Profile",
+                                defaultName: editingProfile.displayName,
+                                defaultColor: NSColor(hexString: editingProfile.colorHex) ?? .systemBlue,
+                                submitTitle: "Save",
+                                profileColor: profileColor
+                            ) { name, colorHex in
+                                browser.updateProfile(id: editingProfile.id, name: name, colorHex: colorHex)
+                                withAnimation(.easeInOut(duration: 0.14)) {
+                                    editingProfileID = nil
+                                }
+                            }
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+
+                        HStack(spacing: 6) {
+                            ForEach(browser.profiles) { profile in
+                                ProfileDotButton(
+                                    profile: profile,
+                                    isSelected: browser.selectedProfileID == profile.id,
+                                    onSelect: {
+                                        browser.switchProfile(id: profile.id)
+                                    },
+                                    onEdit: {
+                                        withAnimation(.easeInOut(duration: 0.14)) {
+                                            isAddingProfile = false
+                                            editingProfileID = profile.id
+                                        }
+                                    },
+                                    onDelete: {
+                                        withAnimation(.easeInOut(duration: 0.14)) {
+                                            if editingProfileID == profile.id {
+                                                editingProfileID = nil
+                                            }
+                                            browser.deleteProfile(id: profile.id)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Divider()
+                        .opacity(0.38)
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Bezel Style")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
 
+                        HStack(spacing: 6) {
+                            ForEach(BrowserBezelStyle.allCases, id: \.rawValue) { style in
+                                SettingsSegmentButton(
+                                    title: style.label,
+                                    isSelected: browser.bezelStyle == style
+                                ) {
+                                    browser.setBezelStyle(style)
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+                        .opacity(0.38)
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Page Zoom")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+
+                        SettingsZoomControls(browser: browser)
+                    }
+
+                    Divider()
+                        .opacity(0.38)
+
+                    HStack(spacing: 8) {
+                        ForEach(BrowserMediaDeviceKind.allCases, id: \.rawValue) { kind in
+                            MediaPermissionButton(
+                                kind: kind,
+                                isAllowed: browser.activeMediaPermissionSnapshot.isAllowed(kind),
+                                isEnabled: browser.activeMediaPermissionSnapshot.hasActivePage
+                            ) {
+                                browser.toggleActivePageMediaPermission(kind)
+                            }
+                        }
+
                         Spacer()
 
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.14)) {
-                                isAddingProfile.toggle()
-                            }
-                        } label: {
-                            Image(systemName: isAddingProfile ? "minus" : "plus")
-                                .font(.system(size: 11, weight: .bold))
-                                .frame(width: 24, height: 22)
+                        Button(action: onOpenFullSettings) {
+                            Image(systemName: "slider.horizontal.3")
+                                .font(.system(size: 12, weight: .semibold))
+                                .frame(width: 30, height: 28)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(isAddingProfile ? "Cancel Profile" : "Add Profile")
-                        .help(isAddingProfile ? "Cancel" : "Add Profile")
-                    }
-
-                    if isAddingProfile {
-                        ProfileCreationPanel(
-                            title: "New Profile",
-                            defaultName: "",
-                            defaultColor: NSColor(hexString: BrowserProfile.defaultColorHex) ?? .systemBlue,
-                            profileColor: profileColor
-                        ) { name, colorHex in
-                            browser.createProfile(name: name, colorHex: colorHex)
-                            withAnimation(.easeInOut(duration: 0.14)) {
-                                isAddingProfile = false
-                            }
+                        .foregroundStyle(.primary)
+                        .background {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(Color.primary.opacity(0.1))
                         }
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-
-                    if let editingProfile = editingProfile {
-                        ProfileCreationPanel(
-                            title: "Edit Profile",
-                            defaultName: editingProfile.displayName,
-                            defaultColor: NSColor(hexString: editingProfile.colorHex) ?? .systemBlue,
-                            submitTitle: "Save",
-                            profileColor: profileColor
-                        ) { name, colorHex in
-                            browser.updateProfile(id: editingProfile.id, name: name, colorHex: colorHex)
-                            withAnimation(.easeInOut(duration: 0.14)) {
-                                editingProfileID = nil
-                            }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
                         }
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-
-                    HStack(spacing: 6) {
-                        ForEach(browser.profiles) { profile in
-                            ProfileDotButton(
-                                profile: profile,
-                                isSelected: browser.selectedProfileID == profile.id,
-                                onSelect: {
-                                    browser.switchProfile(id: profile.id)
-                                },
-                                onEdit: {
-                                    withAnimation(.easeInOut(duration: 0.14)) {
-                                        isAddingProfile = false
-                                        editingProfileID = profile.id
-                                    }
-                                },
-                                onDelete: {
-                                    withAnimation(.easeInOut(duration: 0.14)) {
-                                        if editingProfileID == profile.id {
-                                            editingProfileID = nil
-                                        }
-                                        browser.deleteProfile(id: profile.id)
-                                    }
-                                }
-                            )
-                        }
+                        .accessibilityLabel("Open Full Settings")
+                        .help("Full Settings")
                     }
                 }
-
-                Divider()
-                    .opacity(0.38)
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Bezel Style")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 6) {
-                        ForEach(BrowserBezelStyle.allCases, id: \.rawValue) { style in
-                            SettingsSegmentButton(
-                                title: style.label,
-                                isSelected: browser.bezelStyle == style
-                            ) {
-                                browser.setBezelStyle(style)
-                            }
-                        }
-                    }
-                }
-
-                Divider()
-                    .opacity(0.38)
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Page Zoom")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-
-                    SettingsZoomControls(browser: browser)
-                }
-
-                Divider()
-                    .opacity(0.38)
-
-                HStack(spacing: 8) {
-                    ForEach(BrowserMediaDeviceKind.allCases, id: \.rawValue) { kind in
-                        MediaPermissionButton(
-                            kind: kind,
-                            isAllowed: browser.activeMediaPermissionSnapshot.isAllowed(kind),
-                            isEnabled: browser.activeMediaPermissionSnapshot.hasActivePage
-                        ) {
-                            browser.toggleActivePageMediaPermission(kind)
-                        }
-                    }
-
-                    Spacer()
-
-                    Button(action: onOpenFullSettings) {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 12, weight: .semibold))
-                            .frame(width: 30, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.primary)
-                    .background {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Color.primary.opacity(0.1))
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-                    }
-                    .accessibilityLabel("Open Full Settings")
-                    .help("Full Settings")
-                }
+                .padding(10)
             }
-            .padding(10)
+            .frame(maxHeight: 420)
+            .scrollIndicators(.visible)
         }
         .background {
             BrowserChromeBackground(
