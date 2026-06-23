@@ -27,7 +27,7 @@
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://github.com/ryankuah/browser/releases/download/v$(MARKETING_VERSION)/appcast.xml</string>
+	<string>https://github.com/ryankuah/browser/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>sCC3kVj4ep54x4BAxkn1wNHWNKA/UJFCO48gyrkJP9k=</string>
 </dict>
