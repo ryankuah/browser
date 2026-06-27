@@ -88,6 +88,8 @@ struct BrowserWindowView: View {
 
     @State private var isLeftZoneHovered = false
     @State private var isSidebarHovered = false
+    @State private var isProfileZoneHovered = false
+    @State private var isProfileMenuHovered = false
     @State private var isNewTabPromptPresented = false
     @State private var isAddressPromptPresented = false
     @State private var isConsolePresented = false
@@ -98,14 +100,19 @@ struct BrowserWindowView: View {
     @State private var findNavigationRequest: BrowserFindNavigationRequest?
     @State private var commandKeyMonitor: Any?
     @State private var pendingSidebarClose: DispatchWorkItem?
+    @State private var pendingProfileMenuClose: DispatchWorkItem?
     @State private var webViewOcclusionRootRects: [CGRect] = []
 
     private let topChromeHeight: CGFloat = 6
     private let sidebarHoverWidth: CGFloat = 6
     private let contentInset: CGFloat = 6
     private let profileBezelOverlap: CGFloat = 4
+    private let profileHoverHeight: CGFloat = 116
+    private let profileMenuWidth: CGFloat = 168
+    private let profileMenuMaxHeight: CGFloat = 220
     private let sidebarWidth: CGFloat = 236
     private let sidebarCloseDelay: TimeInterval = 0.1
+    private let profileMenuCloseDelay: TimeInterval = 0.1
     private let shellCornerRadius: CGFloat = 20
     private var webCornerRadius: CGFloat {
         max(shellCornerRadius - contentInset, 0)
@@ -117,6 +124,10 @@ struct BrowserWindowView: View {
 
     private var isSidebarVisible: Bool {
         !browser.isElementFullscreenActive && (isLeftZoneHovered || isSidebarHovered)
+    }
+
+    private var isProfileMenuVisible: Bool {
+        !browser.isElementFullscreenActive && (isProfileZoneHovered || isProfileMenuHovered)
     }
 
     var body: some View {
@@ -132,7 +143,12 @@ struct BrowserWindowView: View {
                 height: max(proxy.size.height - webOrigin.y - contentInset, 0)
             )
             let sidebarOverlayWidth = min(sidebarWidth, max(webSize.width, 0))
-            let sidebarOverlayEdgeWidth = sidebarOverlayWidth + contentInset
+            let profileMenuHeight = min(
+                profileMenuMaxHeight,
+                max(CGFloat(browser.profiles.count) * 34 + 16, 50)
+            )
+            let profileHoverY = webOrigin.y + max((webSize.height - profileHoverHeight) / 2, 0)
+            let profileMenuY = webOrigin.y + max((webSize.height - profileMenuHeight) / 2, 0)
             ZStack(alignment: .topLeading) {
                 BrowserChromeBackground(
                     bezelStyle: browser.bezelStyle,
@@ -142,18 +158,6 @@ struct BrowserWindowView: View {
                 )
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
                     .allowsHitTesting(false)
-
-                if isProfileBezelVisible {
-                    ProfileBezelSwitcher(browser: browser, bezelWidth: rightContentInset)
-                        .frame(
-                            width: rightContentInset,
-                            height: max(proxy.size.height - topChromeHeight - contentInset, 0)
-                        )
-                        .offset(
-                            x: max(proxy.size.width - rightContentInset, 0),
-                            y: topChromeHeight
-                        )
-                }
 
                 Group {
                     if let activeTab = browser.activeTab {
@@ -184,9 +188,26 @@ struct BrowserWindowView: View {
                 .animation(.easeInOut(duration: 0.16), value: isSidebarVisible)
 
                 if isSidebarVisible {
-                    sidebarOverlay(width: sidebarOverlayEdgeWidth, height: webSize.height)
+                    sidebarOverlay(
+                        width: sidebarOverlayWidth,
+                        height: webSize.height,
+                        leadingCaptureWidth: contentInset
+                    )
                         .offset(x: 0, y: webOrigin.y)
                         .zIndex(4)
+                }
+
+                if isProfileMenuVisible {
+                    profileMenuOverlay(
+                        width: profileMenuWidth,
+                        height: profileMenuHeight,
+                        trailingCaptureWidth: rightContentInset
+                    )
+                    .offset(
+                        x: max(proxy.size.width - profileMenuWidth - rightContentInset, 0),
+                        y: profileMenuY
+                    )
+                    .zIndex(4)
                 }
 
                 if !browser.isElementFullscreenActive {
@@ -199,6 +220,21 @@ struct BrowserWindowView: View {
                         )
                         .offset(x: 0, y: webOrigin.y)
                         .zIndex(3)
+
+                    if isProfileBezelVisible {
+                        PassthroughHoverRegion { isHovered in
+                            updateProfileZoneHover(isHovered)
+                        }
+                        .frame(
+                            width: rightContentInset,
+                            height: min(profileHoverHeight, webSize.height)
+                        )
+                        .offset(
+                            x: max(proxy.size.width - rightContentInset, 0),
+                            y: profileHoverY
+                        )
+                        .zIndex(3)
+                    }
 
                     WindowDragHandle()
                         .frame(width: proxy.size.width, height: topChromeHeight)
@@ -395,6 +431,7 @@ struct BrowserWindowView: View {
             .animation(.easeInOut(duration: 0.16), value: isFindPresented)
             .animation(.easeInOut(duration: 0.16), value: isHistoryPresented)
             .animation(.easeInOut(duration: 0.16), value: isConsolePresented)
+            .animation(.easeInOut(duration: 0.16), value: isProfileMenuVisible)
             .animation(.easeInOut(duration: 0.16), value: browser.bezelStyle)
             .animation(.easeInOut(duration: 0.16), value: browser.profileColorHex)
             .animation(.easeInOut(duration: 0.16), value: browser.isOnboardingRequired)
@@ -626,30 +663,55 @@ struct BrowserWindowView: View {
         }
     }
 
-    private func sidebarOverlay(width: CGFloat, height: CGFloat) -> some View {
-        BrowserSidebar(
-            browser: browser,
-            updateController: updateController,
-            isSettingsPresented: $isSettingsPresented,
-            window: windowReference.window,
-            cornerRadius: webCornerRadius,
-            onOpenFullSettings: {
-                showFullSettingsPage()
-            },
-            onOpenAddressPrompt: {
-                isNewTabPromptPresented = false
-                isAddressPromptPresented = true
-            },
-            onOpenHistory: {
-                showHistoryPage()
-            }
-        )
-        .frame(width: width, height: height, alignment: .topLeading)
-        .clipShape(RoundedRectangle(cornerRadius: webCornerRadius, style: .continuous))
+    private func sidebarOverlay(width: CGFloat, height: CGFloat, leadingCaptureWidth: CGFloat = 0) -> some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+                .contentShape(Rectangle())
+
+            BrowserSidebar(
+                browser: browser,
+                updateController: updateController,
+                isSettingsPresented: $isSettingsPresented,
+                window: windowReference.window,
+                cornerRadius: webCornerRadius,
+                onOpenFullSettings: {
+                    showFullSettingsPage()
+                },
+                onOpenAddressPrompt: {
+                    isNewTabPromptPresented = false
+                    isAddressPromptPresented = true
+                },
+                onOpenHistory: {
+                    showHistoryPage()
+                }
+            )
+            .frame(width: width, height: height, alignment: .topLeading)
+            .clipShape(RoundedRectangle(cornerRadius: webCornerRadius, style: .continuous))
+            .offset(x: leadingCaptureWidth)
+        }
+        .frame(width: width + leadingCaptureWidth, height: height, alignment: .topLeading)
         .webViewOcclusionRegion()
         .transition(.move(edge: .leading))
         .onHover { isHovered in
             updateSidebarHover(isHovered)
+        }
+    }
+
+    private func profileMenuOverlay(width: CGFloat, height: CGFloat, trailingCaptureWidth: CGFloat) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Color.clear
+                .contentShape(Rectangle())
+
+            ProfileBezelSwitcher(browser: browser)
+                .frame(width: width, height: height, alignment: .top)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .offset(x: -trailingCaptureWidth)
+        }
+        .frame(width: width + trailingCaptureWidth, height: height, alignment: .topTrailing)
+        .webViewOcclusionRegion()
+        .transition(.move(edge: .trailing).combined(with: .opacity))
+        .onHover { isHovered in
+            updateProfileMenuHover(isHovered)
         }
     }
 
@@ -699,6 +761,54 @@ struct BrowserWindowView: View {
     private func cancelPendingSidebarClose() {
         pendingSidebarClose?.cancel()
         pendingSidebarClose = nil
+    }
+
+    private func updateProfileZoneHover(_ isHovered: Bool) {
+        if isHovered {
+            cancelPendingProfileMenuClose()
+            withAnimation(.easeInOut(duration: 0.16)) {
+                isProfileZoneHovered = true
+            }
+            return
+        }
+
+        scheduleProfileMenuClose {
+            isProfileZoneHovered = false
+        }
+    }
+
+    private func updateProfileMenuHover(_ isHovered: Bool) {
+        if isHovered {
+            cancelPendingProfileMenuClose()
+            withAnimation(.easeInOut(duration: 0.16)) {
+                isProfileZoneHovered = false
+                isProfileMenuHovered = true
+            }
+            return
+        }
+
+        scheduleProfileMenuClose {
+            isProfileMenuHovered = false
+        }
+    }
+
+    private func scheduleProfileMenuClose(_ update: @escaping () -> Void) {
+        pendingProfileMenuClose?.cancel()
+
+        let workItem = DispatchWorkItem {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                update()
+            }
+            pendingProfileMenuClose = nil
+        }
+
+        pendingProfileMenuClose = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + profileMenuCloseDelay, execute: workItem)
+    }
+
+    private func cancelPendingProfileMenuClose() {
+        pendingProfileMenuClose?.cancel()
+        pendingProfileMenuClose = nil
     }
 
     private func webViewOcclusionRects(rootRects: [CGRect], webOrigin: CGPoint, webSize: CGSize) -> [CGRect] {

@@ -3,34 +3,68 @@ import SwiftUI
 
 struct ProfileBezelSwitcher: View {
     @ObservedObject var browser: BrowserState
-    let bezelWidth: CGFloat
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 ForEach(browser.profiles) { profile in
                     let isSelected = browser.selectedProfileID == profile.id
 
                     Button {
                         browser.switchProfile(id: profile.id)
                     } label: {
-                        Rectangle()
-                            .fill(Color(nsColor: NSColor(hexString: profile.colorHex) ?? .systemBlue))
-                            .frame(width: bezelWidth, height: isSelected ? 44 : 32)
-                            .contentShape(Rectangle())
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(Color(nsColor: NSColor(hexString: profile.colorHex) ?? .systemBlue))
+                                .frame(width: 14, height: 14)
+                                .overlay {
+                                    Circle()
+                                        .stroke(Color.primary.opacity(0.18), lineWidth: 1)
+                                }
+
+                            Text(profile.displayName)
+                                .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(isSelected ? Color.primary : Color.clear)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .contentShape(Rectangle())
+                        .background {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(isSelected ? Color.primary.opacity(0.1) : Color.clear)
+                        }
                     }
-                    .frame(width: bezelWidth, height: isSelected ? 44 : 32)
                     .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
                     .cursor(.pointingHand)
                     .accessibilityLabel(profile.displayName)
                     .help(profile.displayName)
                 }
             }
-            .frame(width: bezelWidth)
-            .padding(.top, 10)
-            .padding(.bottom, 10)
+            .padding(8)
         }
         .scrollIndicators(.hidden)
+        .background {
+            BrowserChromeBackground(
+                bezelStyle: browser.bezelStyle,
+                cornerRadius: 10,
+                effect: .liquidGlass(
+                    style: .regular,
+                    tintColor: NSColor.black.withAlphaComponent(0.08)
+                ),
+                profileColor: browser.profileNSColor
+            )
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.14), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.18), radius: 18, y: 10)
     }
 }
 
