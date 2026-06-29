@@ -184,10 +184,16 @@ final class BrowserUpdateController: NSObject, ObservableObject, SPUUserDriver {
 @main
 struct BrowserApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var session = BrowserSessionController()
 
     var body: some Scene {
         WindowGroup {
-            BrowserWindowView(updateController: appDelegate.updateController)
+            BrowserAuthGate(session: session) {
+                BrowserWindowView(
+                    updateController: appDelegate.updateController,
+                    session: session
+                )
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {

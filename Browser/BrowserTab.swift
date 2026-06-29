@@ -79,6 +79,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
                     return
                 }
 
+                self.webView.updateElementFullscreenPresentation(for: self.webView.fullscreenState)
                 self.onFullscreenStateDidChange?(self)
             }
         }

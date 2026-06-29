@@ -52,7 +52,7 @@ final class BrowserWebContainerView: NSView {
 
     var cornerRadius: CGFloat = 0 {
         didSet {
-            layer?.cornerRadius = cornerRadius
+            updateCornerMask()
         }
     }
 
@@ -60,9 +60,9 @@ final class BrowserWebContainerView: NSView {
         super.init(frame: .zero)
 
         wantsLayer = true
-        layer?.masksToBounds = true
         layer?.cornerCurve = .continuous
         layer?.backgroundColor = NSColor.clear.cgColor
+        updateCornerMask()
     }
 
     @available(*, unavailable)
@@ -161,6 +161,12 @@ final class BrowserWebContainerView: NSView {
         window?.makeFirstResponder(hostedWebView)
     }
 
+    private func updateCornerMask() {
+        let resolvedCornerRadius = max(cornerRadius, 0)
+        layer?.cornerRadius = resolvedCornerRadius
+        layer?.masksToBounds = resolvedCornerRadius > 0
+    }
+
     private func isPointOccluded(_ point: NSPoint) -> Bool {
         occlusionRects.contains { $0.contains(point) }
     }
@@ -171,12 +177,33 @@ final class BrowserWebView: WKWebView {
     static let desktopSafariUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
     static let safariUserAgentSuffix = "Version/18.0 Safari/605.1.15"
     private var isPointerShieldUpdatePending = false
+    private var isElementFullscreenPresentationActive = false
 
     var occlusionRects: [CGRect] = [] {
         didSet {
             window?.invalidateCursorRects(for: self)
             updatePointerShield()
         }
+    }
+
+    func updateElementFullscreenPresentation(for fullscreenState: WKWebView.FullscreenState) {
+        let isActive = fullscreenState == .enteringFullscreen
+            || fullscreenState == .inFullscreen
+            || fullscreenState == .exitingFullscreen
+        guard isElementFullscreenPresentationActive != isActive else {
+            return
+        }
+
+        isElementFullscreenPresentationActive = isActive
+        underPageBackgroundColor = isActive ? .black : .clear
+        setValue(isActive, forKey: "drawsBackground")
+
+        if isActive {
+            occlusionRects = []
+        }
+
+        needsDisplay = true
+        layer?.setNeedsDisplay()
     }
 
     override init(frame: CGRect, configuration: WKWebViewConfiguration) {

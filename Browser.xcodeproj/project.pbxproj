@@ -39,6 +39,10 @@
 		2B5F3A46D9D4566D774EE769 /* SidebarTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B3DFD1E008817D1100A5650 /* SidebarTabs.swift */; };
 		2BDCF270B83A14E422BE8B72 /* BrowserStorageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B82629A612B3E12E1731A81 /* BrowserStorageModels.swift */; };
 		2BB103B19E83796381BD27EE /* SQLiteSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B8222F79C78DBED7751697F /* SQLiteSupport.swift */; };
+		2BC100012D1A000100000001 /* BrowserCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100002D1A000100000001 /* BrowserCloud.swift */; };
+		2BC100032D1A000100000001 /* BrowserMailPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100022D1A000100000001 /* BrowserMailPage.swift */; };
+		2BC100052D1A000100000001 /* BrowserCalendarPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100042D1A000100000001 /* BrowserCalendarPage.swift */; };
+		2BC1000B2D1A000100000001 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 2BC1000A2D1A000100000001 /* ConvexMobile */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -75,6 +79,9 @@
 		2B3DFD1E008817D1100A5650 /* SidebarTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarTabs.swift; sourceTree = "<group>"; };
 		2B82629A612B3E12E1731A81 /* BrowserStorageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserStorageModels.swift; sourceTree = "<group>"; };
 		2B8222F79C78DBED7751697F /* SQLiteSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLiteSupport.swift; sourceTree = "<group>"; };
+		2BC100002D1A000100000001 /* BrowserCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCloud.swift; sourceTree = "<group>"; };
+		2BC100022D1A000100000001 /* BrowserMailPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserMailPage.swift; sourceTree = "<group>"; };
+		2BC100042D1A000100000001 /* BrowserCalendarPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCalendarPage.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,6 +89,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2BC1000B2D1A000100000001 /* ConvexMobile in Frameworks */,
 				2B336D942C3D51A600B63C2B /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -114,6 +122,7 @@
 					2B336D8A2C3D4C8700B63C2B /* BrowserNavigation.swift */,
 					2B336D7D2C3D4C8400B63C2B /* BrowserState.swift */,
 					2B336D882C3D4C8700B63C2B /* BrowserTab.swift */,
+					2BC100002D1A000100000001 /* BrowserCloud.swift */,
 					2B336D662C3D4C8000B63C2B /* WebView.swift */,
 					2B336D822C3D4C8600B63C2B /* CursorModifier.swift */,
 				2B336D812C3D4C8500B63C2B /* Persistence */,
@@ -148,7 +157,9 @@
 				2BE48B6A936220AE0C933BFB /* BrowserFailureView.swift */,
 				2B103A9C3F4A9FEF84D94F22 /* BrowserFindPanel.swift */,
 				2B20600C79A775026EFE02AE /* BrowserFullSettingsPage.swift */,
+				2BC100042D1A000100000001 /* BrowserCalendarPage.swift */,
 				2B88DDC15985F48350CBAC13 /* BrowserHistoryPage.swift */,
+				2BC100022D1A000100000001 /* BrowserMailPage.swift */,
 				2B0151F54462035696689556 /* BrowserProfileViews.swift */,
 				2B53DCE0285482951017ECF8 /* BrowserToasts.swift */,
 				2B80BA7A6CEBF38327BFC67D /* BrowserWindowOcclusion.swift */,
@@ -186,6 +197,7 @@
 			name = Browser;
 			packageProductDependencies = (
 				2B336D932C3D51A600B63C2B /* Sparkle */,
+				2BC1000A2D1A000100000001 /* ConvexMobile */,
 			);
 			productName = Browser;
 			productReference = 2B336D582C3D4C7F00B63C2B /* Browser.app */;
@@ -217,6 +229,7 @@
 			mainGroup = 2B336D4F2C3D4C7F00B63C2B;
 			packageReferences = (
 				2B336D922C3D51A600B63C2B /* XCRemoteSwiftPackageReference "Sparkle" */,
+				2BC100082D1A000100000001 /* XCRemoteSwiftPackageReference "convex-swift" */,
 			);
 			productRefGroup = 2B336D592C3D4C7F00B63C2B /* Products */;
 			projectDirPath = "";
@@ -250,6 +263,7 @@
 					2B336D682C3D4C8000B63C2B /* WebView.swift in Sources */,
 					2B336D7E2C3D4C8400B63C2B /* BrowserState.swift in Sources */,
 					2B336D872C3D4C8700B63C2B /* BrowserTab.swift in Sources */,
+					2BC100012D1A000100000001 /* BrowserCloud.swift in Sources */,
 					2B336D802C3D4C8500B63C2B /* BrowserDatabase.swift in Sources */,
 					2B336D8B2C3D4C8700B63C2B /* BrowserPersistenceStore.swift in Sources */,
 					2B336D742C3D4C8300B63C2B /* BrowserSidebar.swift in Sources */,
@@ -261,7 +275,9 @@
 					2B0B8466F7425FEBAA3AA46F /* BrowserFailureView.swift in Sources */,
 					2B02A59760D828646C7AC6C3 /* BrowserFindPanel.swift in Sources */,
 					2BA155E22421955C0E3D7A81 /* BrowserFullSettingsPage.swift in Sources */,
+					2BC100052D1A000100000001 /* BrowserCalendarPage.swift in Sources */,
 					2B9D420FE812E97BC7D17F14 /* BrowserHistoryPage.swift in Sources */,
+					2BC100032D1A000100000001 /* BrowserMailPage.swift in Sources */,
 					2BEEF46EC68BAB28E2046202 /* BrowserProfileViews.swift in Sources */,
 					2B69F0B907CDDCAFBD14A503 /* BrowserToasts.swift in Sources */,
 					2BB13BB91B85465D924F9C18 /* BrowserWindowOcclusion.swift in Sources */,
@@ -479,6 +495,14 @@
 				version = 2.9.3;
 			};
 		};
+		2BC100082D1A000100000001 /* XCRemoteSwiftPackageReference "convex-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/get-convex/convex-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.8.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -486,6 +510,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 2B336D922C3D51A600B63C2B /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		2BC1000A2D1A000100000001 /* ConvexMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2BC100082D1A000100000001 /* XCRemoteSwiftPackageReference "convex-swift" */;
+			productName = ConvexMobile;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

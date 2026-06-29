@@ -81,10 +81,25 @@ private struct BrowserContentView: View {
     }
 }
 
+private struct WebContentClipModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    let isEnabled: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        } else {
+            content
+        }
+    }
+}
+
 struct BrowserWindowView: View {
     @StateObject private var browser = BrowserState()
     @StateObject private var windowReference = WindowReference()
     @ObservedObject var updateController: BrowserUpdateController
+    @ObservedObject var session: BrowserSessionController
 
     @State private var isLeftZoneHovered = false
     @State private var isSidebarHovered = false
@@ -97,6 +112,8 @@ struct BrowserWindowView: View {
     @State private var isFullSettingsPresented = false
     @State private var isFindPresented = false
     @State private var isHistoryPresented = false
+    @State private var isMailPresented = false
+    @State private var isCalendarPresented = false
     @State private var findNavigationRequest: BrowserFindNavigationRequest?
     @State private var commandKeyMonitor: Any?
     @State private var pendingSidebarClose: DispatchWorkItem?
@@ -132,15 +149,19 @@ struct BrowserWindowView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let isProfileBezelVisible = !browser.isElementFullscreenActive && !browser.profiles.isEmpty
-            let rightContentInset = isProfileBezelVisible ? contentInset + profileBezelOverlap : contentInset
+            let isElementFullscreenActive = browser.isElementFullscreenActive
+            let activeContentInset: CGFloat = isElementFullscreenActive ? 0 : contentInset
+            let activeTopChromeHeight: CGFloat = isElementFullscreenActive ? 0 : topChromeHeight
+            let activeWebCornerRadius: CGFloat = isElementFullscreenActive ? 0 : webCornerRadius
+            let isProfileBezelVisible = !isElementFullscreenActive && !browser.profiles.isEmpty
+            let rightContentInset = isProfileBezelVisible ? activeContentInset + profileBezelOverlap : activeContentInset
             let webOrigin = CGPoint(
-                x: contentInset,
-                y: topChromeHeight
+                x: activeContentInset,
+                y: activeTopChromeHeight
             )
             let webSize = CGSize(
-                width: max(proxy.size.width - contentInset - rightContentInset, 0),
-                height: max(proxy.size.height - webOrigin.y - contentInset, 0)
+                width: max(proxy.size.width - activeContentInset - rightContentInset, 0),
+                height: max(proxy.size.height - webOrigin.y - activeContentInset, 0)
             )
             let sidebarOverlayWidth = min(sidebarWidth, max(webSize.width, 0))
             let profileMenuHeight = min(
@@ -164,8 +185,8 @@ struct BrowserWindowView: View {
                         BrowserContentView(
                             tab: activeTab,
                             shouldMountWebView: browser.shouldMountWebView(for: activeTab),
-                            webCornerRadius: webCornerRadius,
-                            occlusionRects: webViewOcclusionRects(
+                            webCornerRadius: activeWebCornerRadius,
+                            occlusionRects: isElementFullscreenActive ? [] : webViewOcclusionRects(
                                 rootRects: webViewOcclusionRootRects,
                                 webOrigin: webOrigin,
                                 webSize: webSize
@@ -183,7 +204,10 @@ struct BrowserWindowView: View {
                     }
                 }
                 .frame(width: webSize.width, height: webSize.height, alignment: .topLeading)
-                .clipShape(RoundedRectangle(cornerRadius: webCornerRadius, style: .continuous))
+                .modifier(WebContentClipModifier(
+                    cornerRadius: activeWebCornerRadius,
+                    isEnabled: !isElementFullscreenActive
+                ))
                 .offset(x: webOrigin.x, y: webOrigin.y)
                 .animation(.easeInOut(duration: 0.16), value: isSidebarVisible)
 
@@ -210,7 +234,7 @@ struct BrowserWindowView: View {
                     .zIndex(4)
                 }
 
-                if !browser.isElementFullscreenActive {
+                if !isElementFullscreenActive {
                     PassthroughHoverRegion { isHovered in
                         updateLeftZoneHover(isHovered)
                     }
@@ -395,6 +419,38 @@ struct BrowserWindowView: View {
                     .zIndex(7)
                 }
 
+                if isMailPresented {
+                    BrowserMailPage(
+                        browser: browser,
+                        session: session,
+                        onClose: {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                isMailPresented = false
+                            }
+                        }
+                    )
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .webViewOcclusionRegion()
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    .zIndex(7)
+                }
+
+                if isCalendarPresented {
+                    BrowserCalendarPage(
+                        browser: browser,
+                        session: session,
+                        onClose: {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                isCalendarPresented = false
+                            }
+                        }
+                    )
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .webViewOcclusionRegion()
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    .zIndex(7)
+                }
+
                 BrowserToastStack(browser: browser)
                     .frame(width: min(max(proxy.size.width - 32, 0), 320), alignment: .topTrailing)
                     .offset(
@@ -430,6 +486,8 @@ struct BrowserWindowView: View {
             .animation(.easeInOut(duration: 0.16), value: isFullSettingsPresented)
             .animation(.easeInOut(duration: 0.16), value: isFindPresented)
             .animation(.easeInOut(duration: 0.16), value: isHistoryPresented)
+            .animation(.easeInOut(duration: 0.16), value: isMailPresented)
+            .animation(.easeInOut(duration: 0.16), value: isCalendarPresented)
             .animation(.easeInOut(duration: 0.16), value: isConsolePresented)
             .animation(.easeInOut(duration: 0.16), value: isProfileMenuVisible)
             .animation(.easeInOut(duration: 0.16), value: browser.bezelStyle)
@@ -437,7 +495,6 @@ struct BrowserWindowView: View {
             .animation(.easeInOut(duration: 0.16), value: browser.isOnboardingRequired)
             .animation(.spring(response: 0.24, dampingFraction: 0.86), value: browser.toasts)
             .animation(.easeInOut(duration: 0.16), value: browser.zoomHUD)
-            .animation(.easeInOut(duration: 0.16), value: browser.isElementFullscreenActive)
         }
         .ignoresSafeArea()
         .preferredColorScheme(preferredColorScheme)
@@ -511,8 +568,32 @@ struct BrowserWindowView: View {
                 browser.showDebugJavaScriptPrompt()
             }
         ))
+        .onOpenURL { url in
+            browser.openExternalURL(url)
+        }
         .onAppear {
+            browser.setCloudSync(session)
+            session.migrateLocalStateIfNeeded(from: browser)
             installCommandKeyMonitorIfNeeded()
+        }
+        .onChange(of: session.isSignedIn) { _, isSignedIn in
+            browser.setCloudSync(isSignedIn ? session : nil)
+            if isSignedIn {
+                session.migrateLocalStateIfNeeded(from: browser)
+            }
+        }
+        .onChange(of: browser.isElementFullscreenActive) { _, isActive in
+            guard isActive else {
+                return
+            }
+
+            cancelPendingSidebarClose()
+            cancelPendingProfileMenuClose()
+            isLeftZoneHovered = false
+            isSidebarHovered = false
+            isProfileZoneHovered = false
+            isProfileMenuHovered = false
+            webViewOcclusionRootRects = []
         }
         .onDisappear {
             removeCommandKeyMonitor()
@@ -541,6 +622,20 @@ struct BrowserWindowView: View {
                 if isHistoryPresented {
                     withAnimation(.easeInOut(duration: 0.16)) {
                         isHistoryPresented = false
+                    }
+                    return nil
+                }
+
+                if isMailPresented {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isMailPresented = false
+                    }
+                    return nil
+                }
+
+                if isCalendarPresented {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isCalendarPresented = false
                     }
                     return nil
                 }
@@ -625,6 +720,8 @@ struct BrowserWindowView: View {
 
     private func showFindPanel() {
         isHistoryPresented = false
+        isMailPresented = false
+        isCalendarPresented = false
         withAnimation(.easeInOut(duration: 0.16)) {
             isFindPresented = true
         }
@@ -649,14 +746,40 @@ struct BrowserWindowView: View {
         isFindPresented = false
         isFullSettingsPresented = false
         isSettingsPresented = false
+        isMailPresented = false
+        isCalendarPresented = false
         withAnimation(.easeInOut(duration: 0.16)) {
             isHistoryPresented = true
+        }
+    }
+
+    private func showMailPage() {
+        isFindPresented = false
+        isFullSettingsPresented = false
+        isSettingsPresented = false
+        isHistoryPresented = false
+        isCalendarPresented = false
+        withAnimation(.easeInOut(duration: 0.16)) {
+            isMailPresented = true
+        }
+    }
+
+    private func showCalendarPage() {
+        isFindPresented = false
+        isFullSettingsPresented = false
+        isSettingsPresented = false
+        isHistoryPresented = false
+        isMailPresented = false
+        withAnimation(.easeInOut(duration: 0.16)) {
+            isCalendarPresented = true
         }
     }
 
     private func showFullSettingsPage() {
         isFindPresented = false
         isHistoryPresented = false
+        isMailPresented = false
+        isCalendarPresented = false
         isSettingsPresented = false
         withAnimation(.easeInOut(duration: 0.16)) {
             isFullSettingsPresented = true
@@ -683,6 +806,12 @@ struct BrowserWindowView: View {
                 },
                 onOpenHistory: {
                     showHistoryPage()
+                },
+                onOpenMail: {
+                    showMailPage()
+                },
+                onOpenCalendar: {
+                    showCalendarPage()
                 }
             )
             .frame(width: width, height: height, alignment: .topLeading)

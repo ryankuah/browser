@@ -4,3 +4,8 @@ build/
 signing/
 *.xcuserstate
 xcuserdata/
+node_modules/
+.env
+.env.local
+.env.*.local
+convex/_generated/

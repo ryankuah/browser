@@ -1,0 +1,18 @@
+{
+  "name": "browser-convex-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy",
+    "typecheck": "tsc --noEmit",
+    "test:google-readonly": "node scripts/assert-google-readonly.mjs"
+  },
+  "dependencies": {
+    "convex": "^1.17.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "typescript": "^5.6.3"
+  }
+}

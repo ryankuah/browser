@@ -52,6 +52,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     private var historyURLByTabID: [BrowserTab.ID: String] = [:]
     private var historyRecordTasksByTabID: [BrowserTab.ID: Task<Void, Never>] = [:]
     private var historyCursorSourceByTabID: [BrowserTab.ID: BrowserTab.ID] = [:]
+    private weak var cloudSync: BrowserCloudSynchronizing?
 
     var activeTab: BrowserTab? {
         tabs.first { $0.id == selectedTabID }
@@ -143,6 +144,37 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
     func newTab(url: URL? = nil) {
         _ = createTab(url: url, persist: true)
+    }
+
+    func setCloudSync(_ cloudSync: BrowserCloudSynchronizing?) {
+        self.cloudSync = cloudSync
+        if let cloudSync {
+            Task {
+                await cloudSync.saveProfiles(profiles, activeProfileID: selectedProfileID)
+                await cloudSync.saveSettings([
+                    "activeProfileID": selectedProfileID?.uuidString ?? "",
+                    "bezelStyle": bezelStyle.rawValue,
+                    "searchEngine": searchEngine.rawValue
+                ])
+                if let selectedProfileID {
+                    let snapshot = cloudSessionSnapshot()
+                    await cloudSync.saveProfileState(
+                        profileID: selectedProfileID,
+                        tabs: snapshot.tabs,
+                        selectedTabID: snapshot.selectedTabID,
+                        bookmarks: bookmarks
+                    )
+                }
+            }
+        }
+    }
+
+    func openExternalURL(_ url: URL) {
+        guard BrowserNavigation.isAllowedNavigationURL(url) else {
+            return
+        }
+
+        newTab(url: url)
     }
 
     @discardableResult
@@ -651,6 +683,9 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         Task { [persistence] in
             await persistence.saveSetting(key: "bezelStyle", value: style.rawValue)
         }
+        Task { [cloudSync] in
+            await cloudSync?.saveSettings(["bezelStyle": style.rawValue])
+        }
     }
 
     func setSearchEngine(_ engine: BrowserSearchEngine) {
@@ -661,6 +696,9 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         searchEngine = engine
         Task { [persistence] in
             await persistence.saveSetting(key: "searchEngine", value: engine.rawValue)
+        }
+        Task { [cloudSync] in
+            await cloudSync?.saveSettings(["searchEngine": engine.rawValue])
         }
     }
 
@@ -786,6 +824,9 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
                 position: profile.position
             ))
         }
+        Task { [cloudSync, profiles] in
+            await cloudSync?.saveProfiles(profiles, activeProfileID: profile.id)
+        }
 
         switchProfile(id: profile.id)
     }
@@ -811,6 +852,9 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
                 colorHex: profile.colorHex,
                 position: profile.position
             ))
+        }
+        Task { [cloudSync, profiles, selectedProfileID] in
+            await cloudSync?.saveProfiles(profiles, activeProfileID: selectedProfileID)
         }
     }
 
@@ -867,6 +911,9 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
                 self?.applyProfileState(bookmarks: profileState.bookmarks, session: profileState.session)
             }
         }
+        Task { [cloudSync, remainingProfiles] in
+            await cloudSync?.saveProfiles(remainingProfiles, activeProfileID: nextSelectedProfileID)
+        }
     }
 
     func switchProfile(id: BrowserProfile.ID) {
@@ -880,6 +927,9 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         selectedProfileID = id
         Task { [persistence] in
             await persistence.setActiveProfileID(id)
+        }
+        Task { [cloudSync] in
+            await cloudSync?.saveSettings(["activeProfileID": id.uuidString])
         }
 
         isApplyingStoredState = true
@@ -2022,6 +2072,18 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
                 journeyID: treeRelationship.journeyID,
                 parentVisitID: treeRelationship.parentVisitID
             )
+            if let cloudSync = await MainActor.run(body: { self?.cloudSync }) {
+                await cloudSync.recordHistoryVisit(BrowserCloudHistoryVisit(
+                    clientId: visitID.map { String($0) } ?? UUID().uuidString,
+                    url: url,
+                    title: title,
+                    tabID: tabID,
+                    journeyID: treeRelationship.journeyID,
+                    parentVisitID: treeRelationship.parentVisitID.map { String($0) },
+                    visitedAt: Date(),
+                    origin: BrowserNavigation.originKey(for: url)
+                ))
+            }
 
             await MainActor.run {
                 if let visitID {
@@ -2104,6 +2166,14 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
                 selectedTabID: snapshot.selectedTabID
             )
         }
+        Task { [cloudSync, bookmarks] in
+            await cloudSync?.saveProfileState(
+                profileID: selectedProfileID,
+                tabs: snapshot.tabs,
+                selectedTabID: snapshot.selectedTabID,
+                bookmarks: bookmarks
+            )
+        }
     }
 
     private func persistSessionImmediately() {
@@ -2119,6 +2189,18 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
                 selectedTabID: snapshot.selectedTabID
             )
         }
+        Task { [cloudSync, bookmarks] in
+            await cloudSync?.saveProfileState(
+                profileID: selectedProfileID,
+                tabs: snapshot.tabs,
+                selectedTabID: snapshot.selectedTabID,
+                bookmarks: bookmarks
+            )
+        }
+    }
+
+    func cloudSessionSnapshot() -> (tabs: [BrowserTabSnapshot], selectedTabID: UUID?) {
+        sessionSnapshot()
     }
 
     private func sessionSnapshot() -> (tabs: [BrowserTabSnapshot], selectedTabID: UUID?) {
@@ -2172,6 +2254,15 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         Task { [persistence] in
             await persistence.saveBookmark(storedBookmark, profileID: selectedProfileID)
         }
+        let snapshot = sessionSnapshot()
+        Task { [cloudSync, bookmarks] in
+            await cloudSync?.saveProfileState(
+                profileID: selectedProfileID,
+                tabs: snapshot.tabs,
+                selectedTabID: snapshot.selectedTabID,
+                bookmarks: bookmarks
+            )
+        }
     }
 
     private func removeBookmark(id: BrowserBookmark.ID) {
@@ -2196,6 +2287,15 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
                 id: id,
                 profileID: selectedProfileID,
                 remainingBookmarks: remainingBookmarks
+            )
+        }
+        let snapshot = sessionSnapshot()
+        Task { [cloudSync, bookmarks] in
+            await cloudSync?.saveProfileState(
+                profileID: selectedProfileID,
+                tabs: snapshot.tabs,
+                selectedTabID: snapshot.selectedTabID,
+                bookmarks: bookmarks
             )
         }
     }
