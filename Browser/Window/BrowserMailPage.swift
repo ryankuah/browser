@@ -6,29 +6,35 @@ struct BrowserMailPage: View {
     @ObservedObject var session: BrowserSessionController
     let onClose: () -> Void
 
-    @State private var selectedMessageID: BrowserMailMessage.ID?
+    @State private var selectedThreadID: BrowserMailThread.ID?
     @State private var query = ""
 
-    private var filteredMessages: [BrowserMailMessage] {
+    private var threads: [BrowserMailThread] {
+        BrowserMailThread.grouping(session.mailMessages)
+    }
+
+    private var filteredThreads: [BrowserMailThread] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty else {
-            return session.mailMessages
+            return threads
         }
 
-        return session.mailMessages.filter { message in
-            [message.from, message.to, message.subject, message.snippet]
-                .compactMap { $0?.lowercased() }
-                .contains { $0.contains(trimmed) }
+        return threads.filter { thread in
+            thread.messages.contains { message in
+                [message.from, message.to, message.subject, message.snippet]
+                    .compactMap { $0?.lowercased() }
+                    .contains { $0.contains(trimmed) }
+            }
         }
     }
 
-    private var selectedMessage: BrowserMailMessage? {
-        if let selectedMessageID,
-           let message = filteredMessages.first(where: { $0.id == selectedMessageID }) {
-            return message
+    private var selectedThread: BrowserMailThread? {
+        if let selectedThreadID,
+           let thread = filteredThreads.first(where: { $0.id == selectedThreadID }) {
+            return thread
         }
 
-        return filteredMessages.first
+        return filteredThreads.first
     }
 
     private var primaryBackfillState: BrowserMailBackfillState? {
@@ -82,8 +88,8 @@ struct BrowserMailPage: View {
         }
         .onAppear {
             session.refreshCloudData()
-            if selectedMessageID == nil {
-                selectedMessageID = filteredMessages.first?.id
+            if selectedThreadID == nil {
+                selectedThreadID = filteredThreads.first?.id
             }
         }
         .onExitCommand(perform: onClose)
@@ -139,19 +145,6 @@ struct BrowserMailPage: View {
             }
             .buttonStyle(.plain)
             .help("Refresh")
-
-            if session.hasConnectedGoogleAccount {
-                Button {
-                    session.startGmailBackfill()
-                } label: {
-                    Image(systemName: "tray.and.arrow.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.plain)
-                .disabled(primaryBackfillState?.isRunning == true)
-                .help("Backfill recent Gmail")
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -173,22 +166,12 @@ struct BrowserMailPage: View {
                 .frame(maxWidth: 420)
 
             if session.hasConnectedGoogleAccount {
-                HStack(spacing: 10) {
-                    Button {
-                        session.refreshCloudData()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        session.startGmailBackfill()
-                    } label: {
-                        Label(primaryBackfillState?.isRunning == true ? "Backfilling" : "Backfill Mail", systemImage: "tray.and.arrow.down")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(primaryBackfillState?.isRunning == true)
+                Button {
+                    session.refreshCloudData()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .buttonStyle(.bordered)
             } else {
                 Button {
                     session.openGoogleConnectionURL()
@@ -213,13 +196,25 @@ struct BrowserMailPage: View {
         HStack(spacing: 0) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(filteredMessages) { message in
-                        MailMessageRow(
-                            message: message,
-                            isSelected: selectedMessage?.id == message.id
+                    ForEach(filteredThreads) { thread in
+                        MailThreadRow(
+                            thread: thread,
+                            isSelected: selectedThread?.id == thread.id
                         ) {
-                            selectedMessageID = message.id
+                            selectedThreadID = thread.id
                         }
+                        .onAppear {
+                            if thread.id == filteredThreads.last?.id {
+                                session.loadMoreMailMessages()
+                            }
+                        }
+                    }
+
+                    if session.isLoadingMoreMailMessages {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
                     }
                 }
                 .padding(.vertical, 8)
@@ -229,8 +224,8 @@ struct BrowserMailPage: View {
             Divider()
                 .opacity(0.45)
 
-            if let selectedMessage {
-                MailMessageDetail(message: selectedMessage)
+            if let selectedThread {
+                MailThreadDetail(thread: selectedThread)
             } else {
                 emptySearchState
             }
@@ -249,10 +244,14 @@ struct BrowserMailPage: View {
     }
 }
 
-private struct MailMessageRow: View {
-    let message: BrowserMailMessage
+private struct MailThreadRow: View {
+    let thread: BrowserMailThread
     let isSelected: Bool
     let onSelect: () -> Void
+
+    private var message: BrowserMailMessage {
+        thread.latestMessage
+    }
 
     var body: some View {
         Button(action: onSelect) {
@@ -261,6 +260,18 @@ private struct MailMessageRow: View {
                     Text(message.from ?? "Unknown sender")
                         .font(.system(size: 12, weight: .semibold))
                         .lineLimit(1)
+
+                    if thread.messages.count > 1 {
+                        Text("\(thread.messages.count)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background {
+                                Capsule().fill(Color.primary.opacity(0.08))
+                            }
+                    }
 
                     Spacer()
 
@@ -289,39 +300,53 @@ private struct MailMessageRow: View {
     }
 }
 
-private struct MailMessageDetail: View {
-    let message: BrowserMailMessage
+private struct MailThreadDetail: View {
+    let thread: BrowserMailThread
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(message.subject ?? "No subject")
-                        .font(.system(size: 20, weight: .semibold))
-                        .textSelection(.enabled)
+                ForEach(Array(thread.messages.enumerated()), id: \.element.id) { index, message in
+                    MailMessageDetail(message: message)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        headerLine("From", message.from)
-                        headerLine("To", message.to)
-                        if let date = message.displayDate {
-                            headerLine("Date", DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short))
-                        }
+                    if index < thread.messages.count - 1 {
+                        Divider()
+                            .opacity(0.45)
                     }
-                    .font(.system(size: 12))
                 }
-
-                Divider()
-                    .opacity(0.45)
-
-                Text(message.bodyText ?? message.snippet ?? "No body imported for this message.")
-                    .font(.system(size: 13))
-                    .lineSpacing(4)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(24)
             .frame(maxWidth: 880, alignment: .leading)
             .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+private struct MailMessageDetail: View {
+    let message: BrowserMailMessage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message.subject ?? "No subject")
+                    .font(.system(size: 20, weight: .semibold))
+                    .textSelection(.enabled)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    headerLine("From", message.from)
+                    headerLine("To", message.to)
+                    if let date = message.displayDate {
+                        headerLine("Date", DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short))
+                    }
+                }
+                .font(.system(size: 12))
+            }
+
+            Text(message.bodyText ?? message.snippet ?? "No body imported for this message.")
+                .font(.system(size: 13))
+                .lineSpacing(4)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

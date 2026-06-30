@@ -32,11 +32,18 @@ http.route({
     const payload = await request.json().catch(() => null);
     const rawData = payload?.message?.data;
     const decoded = typeof rawData === "string" ? decodePubSubData(rawData) : {};
-    await ctx.runMutation(internal.google.enqueueSyncJob, {
-      provider: "gmail",
-      reason: "pubsub",
-      payloadJson: JSON.stringify(decoded),
-    });
+    const emailAddress = typeof decoded.emailAddress === "string" ? decoded.emailAddress : undefined;
+    const historyId = typeof decoded.historyId === "string" ? decoded.historyId : undefined;
+
+    if (emailAddress) {
+      const googleAccountId = await ctx.runQuery(internal.google.resolveGoogleAccountByEmail, {
+        email: emailAddress,
+      });
+      if (googleAccountId) {
+        await ctx.scheduler.runAfter(0, internal.google.syncGmail, { googleAccountId, historyId });
+      }
+    }
+
     return new Response(null, { status: 204 });
   }),
 });
@@ -47,12 +54,16 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const resourceState = request.headers.get("x-goog-resource-state") ?? "unknown";
     const channelId = request.headers.get("x-goog-channel-id") ?? undefined;
-    const resourceId = request.headers.get("x-goog-resource-id") ?? undefined;
-    await ctx.runMutation(internal.google.enqueueSyncJob, {
-      provider: "calendar",
-      reason: "watch",
-      payloadJson: JSON.stringify({ resourceState, channelId, resourceId }),
-    });
+
+    if (channelId && resourceState !== "sync") {
+      const googleAccountId = await ctx.runQuery(internal.google.resolveGoogleAccountByCalendarChannel, {
+        channelId,
+      });
+      if (googleAccountId) {
+        await ctx.scheduler.runAfter(0, internal.google.syncCalendars, { googleAccountId });
+      }
+    }
+
     return new Response(null, { status: 204 });
   }),
 });

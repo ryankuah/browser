@@ -87,6 +87,31 @@ struct BrowserMailMessage: Identifiable, Decodable, Equatable {
     }
 }
 
+struct BrowserMailThread: Identifiable, Equatable {
+    let id: String
+    /// Messages within the thread, oldest first.
+    let messages: [BrowserMailMessage]
+
+    var latestMessage: BrowserMailMessage {
+        messages.last ?? messages[0]
+    }
+
+    static func grouping(_ messages: [BrowserMailMessage]) -> [BrowserMailThread] {
+        Dictionary(grouping: messages, by: \.providerThreadId)
+            .map { threadID, messages in
+                BrowserMailThread(
+                    id: threadID,
+                    messages: messages.sorted { lhs, rhs in
+                        (lhs.displayDate ?? .distantPast) < (rhs.displayDate ?? .distantPast)
+                    }
+                )
+            }
+            .sorted { lhs, rhs in
+                (lhs.latestMessage.displayDate ?? .distantPast) > (rhs.latestMessage.displayDate ?? .distantPast)
+            }
+    }
+}
+
 struct BrowserGoogleCalendar: Identifiable, Decodable, Equatable {
     let id: String
     let summary: String
@@ -164,6 +189,8 @@ struct BrowserCalendarEvent: Identifiable, Decodable, Equatable {
 final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizing {
     @Published private(set) var authPhase: BrowserAuthPhase
     @Published private(set) var mailMessages: [BrowserMailMessage] = []
+    @Published private(set) var hasMoreMailMessages = true
+    @Published private(set) var isLoadingMoreMailMessages = false
     @Published private(set) var mailBackfillStates: [BrowserMailBackfillState] = []
     @Published private(set) var googleAccounts: [BrowserGoogleAccount] = []
     @Published private(set) var calendars: [BrowserGoogleCalendar] = []
@@ -176,9 +203,13 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
     private let client: ConvexClient?
     private let tokenStore = BrowserSessionTokenStore()
     private var cancellables: Set<AnyCancellable> = []
+    private var mailMessagesCancellable: AnyCancellable?
     private var hasMigratedLocalState = false
     private var hasAttemptedCachedLogin = false
     private var sessionToken: String?
+
+    private let mailMessagePageSize: Double = 100
+    private var mailMessagesLimit: Double = 100
 
     var isSignedIn: Bool {
         authPhase == .signedIn
@@ -300,6 +331,10 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             hasAttemptedCachedLogin = true
             username = nil
             mailMessages = []
+            mailMessagesLimit = mailMessagePageSize
+            hasMoreMailMessages = true
+            isLoadingMoreMailMessages = false
+            mailMessagesCancellable = nil
             mailBackfillStates = []
             googleAccounts = []
             calendars = []
@@ -358,23 +393,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             )
             .store(in: &cancellables)
 
-        client.subscribe(
-            to: "mail:messages",
-            with: ["sessionToken": sessionToken, "limit": 100],
-            yielding: [BrowserMailMessage].self
-        )
-            .receive(on: DispatchQueue.main)
-            .sink(
-                receiveCompletion: { completion in
-                    if case .failure(let error) = completion {
-                        NSLog("Convex mail subscription failed: \(error)")
-                    }
-                },
-                receiveValue: { [weak self] messages in
-                    self?.mailMessages = messages
-                }
-            )
-            .store(in: &cancellables)
+        subscribeToMailMessages(limit: mailMessagesLimit)
 
         client.subscribe(
             to: "mail:backfillStates",
@@ -414,7 +433,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
 
         client.subscribe(
             to: "calendar:events",
-            with: ["sessionToken": sessionToken, "limit": 200],
+            with: ["sessionToken": sessionToken, "limit": Double(200)],
             yielding: [BrowserCalendarEvent].self
         )
             .receive(on: DispatchQueue.main)
@@ -431,22 +450,43 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             .store(in: &cancellables)
     }
 
-    func startGmailBackfill(reset: Bool = false) {
-        guard let client, let sessionToken, isSignedIn else {
+    func loadMoreMailMessages() {
+        guard hasMoreMailMessages, !isLoadingMoreMailMessages else {
             return
         }
 
-        Task {
-            do {
-                try await client.mutation(
-                    "google:startGmailBackfill",
-                    with: ["sessionToken": sessionToken, "reset": reset]
-                )
-                refreshCloudData()
-            } catch {
-                NSLog("Gmail backfill failed to start: \(error.localizedDescription)")
-            }
+        isLoadingMoreMailMessages = true
+        mailMessagesLimit += mailMessagePageSize
+        subscribeToMailMessages(limit: mailMessagesLimit)
+    }
+
+    private func subscribeToMailMessages(limit: Double) {
+        guard let client, let sessionToken else {
+            return
         }
+
+        mailMessagesCancellable = client.subscribe(
+            to: "mail:messages",
+            with: ["sessionToken": sessionToken, "limit": limit],
+            yielding: [BrowserMailMessage].self
+        )
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    self?.isLoadingMoreMailMessages = false
+                    if case .failure(let error) = completion {
+                        NSLog("Convex mail subscription failed: \(error)")
+                    }
+                },
+                receiveValue: { [weak self] messages in
+                    guard let self else {
+                        return
+                    }
+                    self.mailMessages = messages
+                    self.hasMoreMailMessages = Double(messages.count) >= limit
+                    self.isLoadingMoreMailMessages = false
+                }
+            )
     }
 
     func prepareGoogleConnection() {

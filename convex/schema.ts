@@ -189,7 +189,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_account_calendar", ["googleAccountId", "providerCalendarId"])
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    .index("by_channel_id", ["channelId"]),
 
   googleCalendarEvents: defineTable({
     userId: v.id("users"),
