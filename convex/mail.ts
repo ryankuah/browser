@@ -3,11 +3,12 @@ import { query } from "./_generated/server";
 import { getCurrentUser } from "./users";
 
 const MAX_LIST_BODY_TEXT_LENGTH = 20_000;
+const optionalClientNumber = v.optional(v.union(v.number(), v.int64()));
 
 export const messages = query({
   args: {
     sessionToken: v.string(),
-    limit: v.optional(v.number()),
+    limit: optionalClientNumber,
   },
   handler: async (ctx, args) => {
     const userId = await getCurrentUser(ctx, args.sessionToken);
@@ -15,7 +16,7 @@ export const messages = query({
       .query("gmailMessages")
       .withIndex("by_user_recent", (q) => q.eq("userId", userId))
       .order("desc")
-      .take(args.limit ?? 100);
+      .take(normalizeClientNumber(args.limit) ?? 100);
 
     return messages.map(({ bodyHtml: _bodyHtml, bodyText, ...message }) => ({
       ...message,
@@ -96,4 +97,8 @@ function truncateForList(value?: string) {
     return value;
   }
   return `${value.slice(0, MAX_LIST_BODY_TEXT_LENGTH)}\n\n[Message body truncated for list view.]`;
+}
+
+function normalizeClientNumber(value?: number | bigint) {
+  return typeof value === "bigint" ? Number(value) : value;
 }

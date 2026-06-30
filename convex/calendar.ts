@@ -2,6 +2,8 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { getCurrentUser } from "./users";
 
+const optionalClientNumber = v.optional(v.union(v.number(), v.int64()));
+
 export const calendars = query({
   args: { sessionToken: v.string() },
   handler: async (ctx, args) => {
@@ -13,16 +15,16 @@ export const calendars = query({
 export const events = query({
   args: {
     sessionToken: v.string(),
-    from: v.optional(v.number()),
-    limit: v.optional(v.number()),
+    from: optionalClientNumber,
+    limit: optionalClientNumber,
   },
   handler: async (ctx, args) => {
     const userId = await getCurrentUser(ctx, args.sessionToken);
-    const from = args.from ?? Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const from = normalizeClientNumber(args.from) ?? Date.now() - 30 * 24 * 60 * 60 * 1000;
     const events = await ctx.db
       .query("googleCalendarEvents")
       .withIndex("by_user_start", (q) => q.eq("userId", userId).gte("startTimestamp", from))
-      .take(args.limit ?? 200);
+      .take(normalizeClientNumber(args.limit) ?? 200);
     return events;
   },
 });
@@ -39,3 +41,7 @@ export const calendarById = query({
     return calendar;
   },
 });
+
+function normalizeClientNumber(value?: number | bigint) {
+  return typeof value === "bigint" ? Number(value) : value;
+}
