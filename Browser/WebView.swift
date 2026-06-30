@@ -40,6 +40,9 @@ final class BrowserWebContainerView: NSView {
     private var hostedWebView: BrowserWebView?
     private var hostedWebViewConstraints: [NSLayoutConstraint] = []
     private var isMountNotificationPending = false
+    private var pendingWebView: BrowserWebView?
+    private var hasPendingWebView = false
+    private var fullscreenObservation: NSKeyValueObservation?
 
     var onWebViewMounted: (() -> Void)?
     var occlusionRects: [CGRect] = [] {
@@ -75,6 +78,15 @@ final class BrowserWebContainerView: NSView {
             return
         }
 
+        if hostedWebView?.isElementFullscreenTransitionActive == true {
+            pendingWebView = webView
+            hasPendingWebView = true
+            return
+        }
+
+        pendingWebView = nil
+        hasPendingWebView = false
+        fullscreenObservation = nil
         NSLayoutConstraint.deactivate(hostedWebViewConstraints)
         hostedWebViewConstraints = []
         hostedWebView?.removeFromSuperview()
@@ -92,6 +104,15 @@ final class BrowserWebContainerView: NSView {
         }
         webView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(webView)
+        fullscreenObservation = webView.observe(\.fullscreenState, options: [.new]) { [weak self] webView, _ in
+            DispatchQueue.main.async {
+                guard !webView.isElementFullscreenTransitionActive else {
+                    return
+                }
+
+                self?.applyPendingWebViewIfReady()
+            }
+        }
 
         hostedWebViewConstraints = [
             webView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -105,6 +126,21 @@ final class BrowserWebContainerView: NSView {
             self?.isMountNotificationPending = true
             self?.notifyMountedIfReady()
         }
+    }
+
+    private func applyPendingWebViewIfReady() {
+        guard hasPendingWebView else {
+            return
+        }
+
+        if hostedWebView?.isElementFullscreenTransitionActive == true {
+            return
+        }
+
+        let webView = pendingWebView
+        pendingWebView = nil
+        hasPendingWebView = false
+        setWebView(webView)
     }
 
     override func layout() {
@@ -179,6 +215,16 @@ final class BrowserWebView: WKWebView {
     private var isPointerShieldUpdatePending = false
     private var isElementFullscreenPresentationActive = false
 
+    var isElementFullscreenTransitionActive: Bool {
+        Self.isElementFullscreenTransitionActive(fullscreenState)
+    }
+
+    static func isElementFullscreenTransitionActive(_ fullscreenState: WKWebView.FullscreenState) -> Bool {
+        fullscreenState == .enteringFullscreen
+            || fullscreenState == .inFullscreen
+            || fullscreenState == .exitingFullscreen
+    }
+
     var occlusionRects: [CGRect] = [] {
         didSet {
             window?.invalidateCursorRects(for: self)
@@ -187,9 +233,7 @@ final class BrowserWebView: WKWebView {
     }
 
     func updateElementFullscreenPresentation(for fullscreenState: WKWebView.FullscreenState) {
-        let isActive = fullscreenState == .enteringFullscreen
-            || fullscreenState == .inFullscreen
-            || fullscreenState == .exitingFullscreen
+        let isActive = Self.isElementFullscreenTransitionActive(fullscreenState)
         guard isElementFullscreenPresentationActive != isActive else {
             return
         }
