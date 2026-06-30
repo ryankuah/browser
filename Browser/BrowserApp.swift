@@ -226,6 +226,7 @@ struct BrowserApp: App {
             }
             .background(
                 WindowAccessor { window in
+                    externalURLRouter.registerSession(session)
                     externalURLRouter.registerApplicationWindow(window)
                 }
             )

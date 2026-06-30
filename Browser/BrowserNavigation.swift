@@ -3,6 +3,7 @@ import Foundation
 enum BrowserNavigation {
     private static let allowedURLSchemes: Set<String> = ["http", "https"]
     private static let allowedDownloadURLSchemes: Set<String> = ["http", "https", "blob", "data"]
+    static let browserCallbackScheme = "com.ryankuah.browser"
 
     static func url(from address: String, searchEngine: BrowserSearchEngine) -> URL? {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -43,6 +44,10 @@ enum BrowserNavigation {
         }
 
         return allowedURLSchemes.contains(scheme)
+    }
+
+    static func isBrowserCallbackURL(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == browserCallbackScheme
     }
 
     static func isAllowedDownloadURL(_ url: URL) -> Bool {

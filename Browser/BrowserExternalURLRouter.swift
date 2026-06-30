@@ -21,9 +21,16 @@ final class BrowserExternalURLRouter: ObservableObject {
 
     private var registrations: [Registration] = []
     private var pendingURLs: [URL] = []
+    private var pendingCallbackURLs: [URL] = []
     private weak var primaryWindow: NSWindow?
+    private weak var session: BrowserSessionController?
 
     private init() {}
+
+    func registerSession(_ session: BrowserSessionController) {
+        self.session = session
+        drainPendingCallbackURLs()
+    }
 
     func registerApplicationWindow(_ window: NSWindow) {
         pruneRegistrations()
@@ -80,6 +87,11 @@ final class BrowserExternalURLRouter: ObservableObject {
     }
 
     func openExternalURL(_ url: URL) {
+        if BrowserNavigation.isBrowserCallbackURL(url) {
+            openBrowserCallbackURL(url)
+            return
+        }
+
         guard BrowserNavigation.isAllowedNavigationURL(url) else {
             return
         }
@@ -139,6 +151,26 @@ final class BrowserExternalURLRouter: ObservableObject {
         let urls = pendingURLs
         pendingURLs.removeAll()
         urls.forEach { open($0, in: registration) }
+    }
+
+    private func openBrowserCallbackURL(_ url: URL) {
+        guard let session else {
+            pendingCallbackURLs.append(url)
+            return
+        }
+
+        session.handleGoogleOAuthCallback(url)
+        focusExistingWindow()
+    }
+
+    private func drainPendingCallbackURLs() {
+        guard !pendingCallbackURLs.isEmpty, session != nil else {
+            return
+        }
+
+        let urls = pendingCallbackURLs
+        pendingCallbackURLs.removeAll()
+        urls.forEach(openBrowserCallbackURL)
     }
 
     private func pruneRegistrations() {

@@ -372,6 +372,27 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
         BrowserExternalURLRouter.shared.openExternalURL(googleConnectURL)
     }
 
+    func handleGoogleOAuthCallback(_ url: URL) {
+        guard url.host()?.lowercased() == "google",
+              url.path == "/oauth/callback",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return
+        }
+
+        googleConnectURL = nil
+
+        let status = components.queryItems?.first { $0.name == "status" }?.value
+        if status == "error" {
+            let message = components.queryItems?.first { $0.name == "message" }?.value
+            authPhase = .failed(message ?? "Google OAuth failed.")
+            return
+        }
+
+        if isSignedIn {
+            refreshCloudData()
+        }
+    }
+
     func setCalendar(_ calendar: BrowserGoogleCalendar, selected: Bool) {
         guard let client, let sessionToken else {
             return

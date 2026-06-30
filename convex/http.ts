@@ -15,11 +15,13 @@ http.route({
       return new Response("Missing Google OAuth code or state.", { status: 400 });
     }
 
-    await ctx.runAction(api.google.completeOAuth, { code, state });
-    return new Response("Google account connected. You can return to Browser.", {
-      status: 200,
-      headers: { "content-type": "text/plain" },
-    });
+    try {
+      await ctx.runAction(api.google.completeOAuth, { code, state });
+      return redirectToBrowserOAuthCallback("success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Google OAuth failed.";
+      return redirectToBrowserOAuthCallback("error", message);
+    }
   }),
 });
 
@@ -61,6 +63,44 @@ function decodePubSubData(value: string) {
   } catch {
     return {};
   }
+}
+
+function redirectToBrowserOAuthCallback(status: "success" | "error", message?: string) {
+  const callbackUrl = new URL("com.ryankuah.browser://google/oauth/callback");
+  callbackUrl.searchParams.set("status", status);
+  if (message) {
+    callbackUrl.searchParams.set("message", message);
+  }
+  const escapedCallbackUrl = escapeHTML(callbackUrl.toString());
+  const title = status === "success" ? "Google account connected" : "Google connection failed";
+  const body =
+    status === "success"
+      ? "Google account connected. Returning to Browser."
+      : "Google connection failed. Returning to Browser.";
+
+  return new Response(
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>${title}</title>
+    <meta http-equiv="refresh" content="0; url=${escapedCallbackUrl}">
+  </head>
+  <body>
+    <p>${body}</p>
+    <script>window.location.href = ${JSON.stringify(callbackUrl.toString())};</script>
+    <p><a href="${escapedCallbackUrl}">Return to Browser</a></p>
+  </body>
+</html>`,
+    {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    },
+  );
+}
+
+function escapeHTML(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 export default http;

@@ -296,6 +296,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             return
         }
 
+        if BrowserNavigation.isBrowserCallbackURL(url) {
+            BrowserExternalURLRouter.shared.openExternalURL(url)
+            decisionHandler(.cancel)
+            return
+        }
+
         guard BrowserNavigation.isAllowedNavigationURL(url) else {
             decisionHandler(.cancel)
             return
