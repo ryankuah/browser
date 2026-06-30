@@ -11,6 +11,10 @@ const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GMAIL_BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const CALENDAR_BASE_URL = "https://www.googleapis.com/calendar/v3";
+const DEFAULT_GMAIL_BACKFILL_QUERY = "newer_than:365d";
+const DEFAULT_GMAIL_BACKFILL_MAX_PAGES = 50;
+const MAX_GMAIL_BACKFILL_MAX_PAGES = 200;
+const GMAIL_BACKFILL_PAGE_SIZE = 100;
 
 export const connectedAccounts = query({
   args: { sessionToken: v.string() },
@@ -110,6 +114,45 @@ export const setCalendarSelected = mutation({
   },
 });
 
+export const startGmailBackfill = mutation({
+  args: {
+    sessionToken: v.string(),
+    googleAccountId: v.optional(v.id("googleAccounts")),
+    query: v.optional(v.string()),
+    maxPageCount: v.optional(v.number()),
+    reset: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getCurrentUser(ctx, args.sessionToken);
+    let googleAccountId = args.googleAccountId;
+    if (googleAccountId) {
+      const account = await ctx.db.get(googleAccountId);
+      if (!account || account.userId !== userId) {
+        throw new Error("Google account not found.");
+      }
+    } else {
+      const account = await ctx.db
+        .query("googleAccounts")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .first();
+      if (!account) {
+        throw new Error("Connect Google before backfilling Gmail.");
+      }
+      googleAccountId = account._id;
+    }
+
+    const result: { googleAccountId: Id<"googleAccounts">; status: string; query: string; maxPageCount: number } =
+      await ctx.runMutation(internal.google.startGmailBackfillForAccount, {
+        userId,
+        googleAccountId,
+        query: args.query,
+        maxPageCount: args.maxPageCount,
+        reset: args.reset,
+      });
+    return result;
+  },
+});
+
 export const consumeOAuthState = internalMutation({
   args: { state: v.string() },
   handler: async (ctx, args) => {
@@ -170,6 +213,14 @@ export const initialGoogleImport = internalAction({
   args: { googleAccountId: v.id("googleAccounts") },
   handler: async (ctx, args) => {
     await ctx.runAction(internal.google.syncGmail, { googleAccountId: args.googleAccountId, historyId: undefined });
+    const account = await ctx.runQuery(api.mail.googleAccountForSync, { googleAccountId: args.googleAccountId });
+    await ctx.runMutation(internal.google.startGmailBackfillForAccount, {
+      googleAccountId: args.googleAccountId,
+      userId: account.userId,
+      query: DEFAULT_GMAIL_BACKFILL_QUERY,
+      maxPageCount: DEFAULT_GMAIL_BACKFILL_MAX_PAGES,
+      reset: false,
+    });
     await ctx.runAction(internal.google.syncCalendars, { googleAccountId: args.googleAccountId });
   },
 });
@@ -192,7 +243,9 @@ export const processQueuedSyncJobs = internalAction({
           }
         }
 
-        if (googleAccountId && (job.provider === "gmail" || job.provider === "google")) {
+        if (googleAccountId && job.provider === "gmail" && job.reason === "gmail_backfill") {
+          await ctx.runAction(internal.google.syncGmailBackfillPage, { googleAccountId });
+        } else if (googleAccountId && (job.provider === "gmail" || job.provider === "google")) {
           await ctx.runAction(internal.google.syncGmail, {
             googleAccountId,
             historyId: typeof payload.historyId === "string" ? payload.historyId : undefined,
@@ -231,37 +284,7 @@ export const syncGmail = internalAction({
     const messageIds = gmailMessageIds(list);
 
     for (const messageId of messageIds) {
-      const message = await googleJson<GmailMessage>(
-        `${GMAIL_BASE_URL}/messages/${encodeURIComponent(messageId)}?format=full`,
-        accessToken,
-      );
-      const parsed = parseGmailMessage(message);
-      await ctx.runMutation(internal.google.upsertGmailMessage, {
-        googleAccountId: args.googleAccountId,
-        userId: account.userId,
-        message: parsed,
-      });
-
-      for (const attachment of parsed.attachments) {
-        const attachmentResponse = await googleJson<{ data?: string; size?: number }>(
-          `${GMAIL_BASE_URL}/messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(
-            attachment.attachmentId,
-          )}`,
-          accessToken,
-        );
-        const bytes = base64UrlToBytes(attachmentResponse.data ?? "");
-        const storageId = await ctx.storage.store(new Blob([bytes], { type: attachment.mimeType }));
-        await ctx.runMutation(internal.google.upsertGmailAttachment, {
-          googleAccountId: args.googleAccountId,
-          userId: account.userId,
-          providerMessageId: message.id,
-          attachmentId: attachment.attachmentId,
-          filename: attachment.filename,
-          mimeType: attachment.mimeType,
-          size: attachment.size || attachmentResponse.size || bytes.byteLength,
-          storageId,
-        });
-      }
+      await importGmailMessage(ctx, account.userId, args.googleAccountId, messageId, accessToken, true);
     }
 
     const latestHistoryId = "historyId" in list ? list.historyId : undefined;
@@ -269,6 +292,55 @@ export const syncGmail = internalAction({
       googleAccountId: args.googleAccountId,
       historyId: latestHistoryId,
     });
+  },
+});
+
+export const syncGmailBackfillPage = internalAction({
+  args: {
+    googleAccountId: v.id("googleAccounts"),
+  },
+  handler: async (ctx, args) => {
+    const state = await ctx.runMutation(internal.google.takeGmailBackfillPage, {
+      googleAccountId: args.googleAccountId,
+    });
+    if (!state) {
+      return;
+    }
+
+    try {
+      const account = await ctx.runQuery(api.mail.googleAccountForSync, { googleAccountId: args.googleAccountId });
+      const accessToken = await validAccessToken(ctx, account);
+      const url = new URL(`${GMAIL_BASE_URL}/messages`);
+      url.searchParams.set("maxResults", String(GMAIL_BACKFILL_PAGE_SIZE));
+      if (state.backfillQuery) {
+        url.searchParams.set("q", state.backfillQuery);
+      }
+      if (state.backfillPageToken) {
+        url.searchParams.set("pageToken", state.backfillPageToken);
+      }
+
+      const list = await googleJson<GmailListResponse>(url.toString(), accessToken);
+      const messageIds = (list.messages ?? []).map((message) => message.id).filter(Boolean);
+      let importedCount = 0;
+      for (const messageId of messageIds) {
+        await importGmailMessage(ctx, account.userId, args.googleAccountId, messageId, accessToken, false);
+        importedCount += 1;
+      }
+
+      await ctx.runMutation(internal.google.finishGmailBackfillPage, {
+        googleAccountId: args.googleAccountId,
+        nextPageToken: list.nextPageToken,
+        resultSizeEstimate: list.resultSizeEstimate,
+        scannedCount: messageIds.length,
+        importedCount,
+      });
+    } catch (error) {
+      await ctx.runMutation(internal.google.failGmailBackfill, {
+        googleAccountId: args.googleAccountId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   },
 });
 
@@ -420,6 +492,170 @@ export const saveGmailSyncState = internalMutation({
       await ctx.db.patch(existing._id, { historyId: args.historyId ?? existing.historyId, updatedAt: Date.now() });
     } else {
       await ctx.db.insert("gmailSyncState", { ...args, updatedAt: Date.now() });
+    }
+  },
+});
+
+export const startGmailBackfillForAccount = internalMutation({
+  args: {
+    userId: v.id("users"),
+    googleAccountId: v.id("googleAccounts"),
+    query: v.optional(v.string()),
+    maxPageCount: v.optional(v.number()),
+    reset: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const account = await ctx.db.get(args.googleAccountId);
+    if (!account || account.userId !== args.userId) {
+      throw new Error("Google account not found.");
+    }
+
+    const now = Date.now();
+    const query = normalizeBackfillQuery(args.query);
+    const maxPageCount = normalizeBackfillMaxPageCount(args.maxPageCount);
+    const existing = await ctx.db
+      .query("gmailSyncState")
+      .withIndex("by_account", (q) => q.eq("googleAccountId", args.googleAccountId))
+      .unique();
+    const pageToken = args.reset ? undefined : existing?.backfillPageToken;
+
+    const patch = {
+      backfillStatus: "queued",
+      backfillQuery: query,
+      backfillPageToken: pageToken,
+      backfillPageCount: args.reset ? 0 : existing?.backfillPageCount ?? 0,
+      backfillMaxPageCount: maxPageCount,
+      backfillImportedCount: args.reset ? 0 : existing?.backfillImportedCount ?? 0,
+      backfillScannedCount: args.reset ? 0 : existing?.backfillScannedCount ?? 0,
+      backfillResultSizeEstimate: existing?.backfillResultSizeEstimate,
+      backfillRequestedAt: now,
+      backfillStartedAt: args.reset ? undefined : existing?.backfillStartedAt,
+      backfillCompletedAt: undefined,
+      backfillLastError: undefined,
+      updatedAt: now,
+    };
+
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+    } else {
+      await ctx.db.insert("gmailSyncState", {
+        googleAccountId: args.googleAccountId,
+        ...patch,
+      });
+    }
+
+    await ctx.db.insert("syncJobs", {
+      userId: args.userId,
+      googleAccountId: args.googleAccountId,
+      provider: "gmail",
+      reason: "gmail_backfill",
+      payloadJson: JSON.stringify({ query, maxPageCount }),
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return { googleAccountId: args.googleAccountId, status: "queued", query, maxPageCount };
+  },
+});
+
+export const takeGmailBackfillPage = internalMutation({
+  args: {
+    googleAccountId: v.id("googleAccounts"),
+  },
+  handler: async (ctx, args) => {
+    const state = await ctx.db
+      .query("gmailSyncState")
+      .withIndex("by_account", (q) => q.eq("googleAccountId", args.googleAccountId))
+      .unique();
+    if (!state || (state.backfillStatus !== "queued" && state.backfillStatus !== "running")) {
+      return null;
+    }
+    if ((state.backfillPageCount ?? 0) >= (state.backfillMaxPageCount ?? DEFAULT_GMAIL_BACKFILL_MAX_PAGES)) {
+      await ctx.db.patch(state._id, {
+        backfillStatus: "done",
+        backfillCompletedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return null;
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(state._id, {
+      backfillStatus: "running",
+      backfillStartedAt: state.backfillStartedAt ?? now,
+      backfillLastError: undefined,
+      updatedAt: now,
+    });
+    return state;
+  },
+});
+
+export const finishGmailBackfillPage = internalMutation({
+  args: {
+    googleAccountId: v.id("googleAccounts"),
+    nextPageToken: v.optional(v.string()),
+    resultSizeEstimate: v.optional(v.number()),
+    scannedCount: v.number(),
+    importedCount: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const state = await ctx.db
+      .query("gmailSyncState")
+      .withIndex("by_account", (q) => q.eq("googleAccountId", args.googleAccountId))
+      .unique();
+    if (!state) {
+      return;
+    }
+
+    const account = await ctx.db.get(args.googleAccountId);
+    const now = Date.now();
+    const pageCount = (state.backfillPageCount ?? 0) + 1;
+    const maxPageCount = state.backfillMaxPageCount ?? DEFAULT_GMAIL_BACKFILL_MAX_PAGES;
+    const shouldContinue = Boolean(args.nextPageToken) && pageCount < maxPageCount;
+    await ctx.db.patch(state._id, {
+      backfillStatus: shouldContinue ? "queued" : "done",
+      backfillPageToken: args.nextPageToken,
+      backfillPageCount: pageCount,
+      backfillImportedCount: (state.backfillImportedCount ?? 0) + args.importedCount,
+      backfillScannedCount: (state.backfillScannedCount ?? 0) + args.scannedCount,
+      backfillResultSizeEstimate: args.resultSizeEstimate ?? state.backfillResultSizeEstimate,
+      backfillCompletedAt: shouldContinue ? undefined : now,
+      backfillLastError: undefined,
+      updatedAt: now,
+    });
+
+    if (shouldContinue && account) {
+      await ctx.db.insert("syncJobs", {
+        userId: account.userId,
+        googleAccountId: args.googleAccountId,
+        provider: "gmail",
+        reason: "gmail_backfill",
+        payloadJson: JSON.stringify({ query: state.backfillQuery, maxPageCount }),
+        status: "queued",
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  },
+});
+
+export const failGmailBackfill = internalMutation({
+  args: {
+    googleAccountId: v.id("googleAccounts"),
+    error: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const state = await ctx.db
+      .query("gmailSyncState")
+      .withIndex("by_account", (q) => q.eq("googleAccountId", args.googleAccountId))
+      .unique();
+    if (state) {
+      await ctx.db.patch(state._id, {
+        backfillStatus: "failed",
+        backfillLastError: args.error,
+        updatedAt: Date.now(),
+      });
     }
   },
 });
@@ -582,6 +818,51 @@ async function validAccessToken(ctx: ActionCtx, account: GoogleAccountForSync) {
   return refreshed.access_token;
 }
 
+async function importGmailMessage(
+  ctx: ActionCtx,
+  userId: Id<"users">,
+  googleAccountId: Id<"googleAccounts">,
+  messageId: string,
+  accessToken: string,
+  importAttachments: boolean,
+) {
+  const message = await googleJson<GmailMessage>(
+    `${GMAIL_BASE_URL}/messages/${encodeURIComponent(messageId)}?format=full`,
+    accessToken,
+  );
+  const parsed = parseGmailMessage(message);
+  await ctx.runMutation(internal.google.upsertGmailMessage, {
+    googleAccountId,
+    userId,
+    message: parsed,
+  });
+
+  if (!importAttachments) {
+    return;
+  }
+
+  for (const attachment of parsed.attachments) {
+    const attachmentResponse = await googleJson<{ data?: string; size?: number }>(
+      `${GMAIL_BASE_URL}/messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(
+        attachment.attachmentId,
+      )}`,
+      accessToken,
+    );
+    const bytes = base64UrlToBytes(attachmentResponse.data ?? "");
+    const storageId = await ctx.storage.store(new Blob([bytes], { type: attachment.mimeType }));
+    await ctx.runMutation(internal.google.upsertGmailAttachment, {
+      googleAccountId,
+      userId,
+      providerMessageId: message.id,
+      attachmentId: attachment.attachmentId,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      size: attachment.size || attachmentResponse.size || bytes.byteLength,
+      storageId,
+    });
+  }
+}
+
 async function syncCalendarEvents(
   ctx: ActionCtx,
   userId: Id<"users">,
@@ -605,6 +886,18 @@ async function syncCalendarEvents(
       event,
     });
   }
+}
+
+function normalizeBackfillQuery(value?: string) {
+  const query = value?.trim();
+  return query && query.length > 0 ? query : DEFAULT_GMAIL_BACKFILL_QUERY;
+}
+
+function normalizeBackfillMaxPageCount(value?: number) {
+  if (!value || !Number.isFinite(value)) {
+    return DEFAULT_GMAIL_BACKFILL_MAX_PAGES;
+  }
+  return Math.min(Math.max(Math.floor(value), 1), MAX_GMAIL_BACKFILL_MAX_PAGES);
 }
 
 async function exchangeAuthorizationCode(code: string): Promise<GoogleTokenResponse> {
@@ -803,7 +1096,11 @@ type GoogleTokenResponse = {
   scope?: string;
 };
 
-type GmailListResponse = { messages?: Array<{ id: string }> };
+type GmailListResponse = {
+  messages?: Array<{ id: string }>;
+  nextPageToken?: string;
+  resultSizeEstimate?: number;
+};
 type GmailHistoryResponse = {
   historyId?: string;
   history?: Array<{ messagesAdded?: Array<{ message?: { id?: string } }> }>;

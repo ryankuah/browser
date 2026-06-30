@@ -67,7 +67,6 @@ struct BrowserChromeBackground: View {
     let effect: Effect
     let profileColor: NSColor?
     let profileTintAlpha: CGFloat
-    let simpleFillOpacity: Double
 
     init(
         bezelStyle: BrowserBezelStyle,
@@ -80,8 +79,7 @@ struct BrowserChromeBackground: View {
         ],
         effect: Effect,
         profileColor: NSColor? = nil,
-        profileTintAlpha: CGFloat = 0.44,
-        simpleFillOpacity: Double = 1
+        profileTintAlpha: CGFloat = 0.44
     ) {
         self.bezelStyle = bezelStyle
         self.cornerRadius = cornerRadius
@@ -89,14 +87,12 @@ struct BrowserChromeBackground: View {
         self.effect = effect
         self.profileColor = profileColor
         self.profileTintAlpha = profileTintAlpha
-        self.simpleFillOpacity = simpleFillOpacity
     }
 
     var body: some View {
         if bezelStyle == .simple {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(Color(nsColor: profileColor ?? .black))
-                .opacity(simpleFillOpacity)
         } else {
             switch effect {
             case .liquidGlass(let style, let tintColor):

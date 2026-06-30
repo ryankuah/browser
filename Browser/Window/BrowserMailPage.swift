@@ -31,14 +31,39 @@ struct BrowserMailPage: View {
         return filteredMessages.first
     }
 
+    private var primaryBackfillState: BrowserMailBackfillState? {
+        if let accountID = session.googleAccounts.first?.id {
+            return session.mailBackfillStates.first { $0.googleAccountId == accountID }
+        }
+        return session.mailBackfillStates.first
+    }
+
+    private var backfillStatusText: String? {
+        guard let state = primaryBackfillState else {
+            return nil
+        }
+
+        switch state.status {
+        case "queued":
+            return "Backfill queued"
+        case "running":
+            return "Backfilling \(state.importedCount)"
+        case "done":
+            return state.importedCount > 0 ? "Backfilled \(state.importedCount)" : "Backfill complete"
+        case "failed":
+            return "Backfill failed"
+        default:
+            return nil
+        }
+    }
+
     var body: some View {
         ZStack {
             BrowserChromeBackground(
                 bezelStyle: browser.bezelStyle,
                 cornerRadius: 0,
                 effect: .liquidGlass(style: .regular, tintColor: NSColor.black.withAlphaComponent(0.16)),
-                profileColor: browser.profileNSColor,
-                simpleFillOpacity: 0.72
+                profileColor: browser.profileNSColor
             )
             .ignoresSafeArea()
 
@@ -86,6 +111,13 @@ struct BrowserMailPage: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
 
+            if let backfillStatusText {
+                Text(backfillStatusText)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
             Spacer()
 
             TextField("Search mail", text: $query)
@@ -107,6 +139,19 @@ struct BrowserMailPage: View {
             }
             .buttonStyle(.plain)
             .help("Refresh")
+
+            if session.hasConnectedGoogleAccount {
+                Button {
+                    session.startGmailBackfill()
+                } label: {
+                    Image(systemName: "tray.and.arrow.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.plain)
+                .disabled(primaryBackfillState?.isRunning == true)
+                .help("Backfill recent Gmail")
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -128,12 +173,22 @@ struct BrowserMailPage: View {
                 .frame(maxWidth: 420)
 
             if session.hasConnectedGoogleAccount {
-                Button {
-                    session.refreshCloudData()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                HStack(spacing: 10) {
+                    Button {
+                        session.refreshCloudData()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        session.startGmailBackfill()
+                    } label: {
+                        Label(primaryBackfillState?.isRunning == true ? "Backfilling" : "Backfill Mail", systemImage: "tray.and.arrow.down")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(primaryBackfillState?.isRunning == true)
                 }
-                .buttonStyle(.borderedProminent)
             } else {
                 Button {
                     session.openGoogleConnectionURL()

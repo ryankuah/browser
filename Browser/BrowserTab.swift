@@ -252,7 +252,12 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        pageFailure = nil
+        if pageFailure != nil {
+            refreshFromWebView()
+            pendingNavigationURL = nil
+            return
+        }
+
         refreshFromWebView()
         pendingNavigationURL = nil
         refreshFavicon()
@@ -341,6 +346,17 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
+        if navigationResponse.isForMainFrame,
+           let httpResponse = navigationResponse.response as? HTTPURLResponse,
+           Self.shouldShowFailure(forHTTPStatusCode: httpResponse.statusCode) {
+            pendingNavigationURL = nil
+            url = httpResponse.url ?? url
+            pageFailure = .httpFailure(url: httpResponse.url ?? url, statusCode: httpResponse.statusCode)
+            refreshFromWebView()
+            decisionHandler(.cancel)
+            return
+        }
+
         if navigationResponse.canShowMIMEType {
             decisionHandler(.allow)
             return
@@ -598,6 +614,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         }
 
         return candidate
+    }
+
+    private static func shouldShowFailure(forHTTPStatusCode statusCode: Int) -> Bool {
+        statusCode == 404 || (500...599).contains(statusCode)
     }
 
     @discardableResult

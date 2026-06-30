@@ -631,6 +631,31 @@ struct BrowserPageFailure: Equatable {
             isCertificateError: false
         )
     }
+
+    static func httpFailure(url: URL?, statusCode: Int) -> BrowserPageFailure {
+        let title: String
+        let message: String
+
+        switch statusCode {
+        case 404:
+            title = "Page Not Found"
+            message = "The server could not find a page at this address."
+        case 500...599:
+            title = "Server Error"
+            message = "The server returned an error instead of the page."
+        default:
+            title = "Page Failed to Load"
+            message = "The server returned an HTTP error for this address."
+        }
+
+        return BrowserPageFailure(
+            url: url,
+            title: title,
+            message: message,
+            detail: "HTTP \(statusCode)",
+            isCertificateError: false
+        )
+    }
 }
 
 extension String {

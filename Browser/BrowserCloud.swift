@@ -82,7 +82,7 @@ struct BrowserMailMessage: Identifiable, Decodable, Equatable {
     }
 
     var displayDate: Date? {
-        internalDate.map(Date.init(timeIntervalSince1970:))
+        internalDate.map { Date(timeIntervalSince1970: $0 / 1000) }
     }
 }
 
@@ -109,6 +109,27 @@ struct BrowserGoogleAccount: Identifiable, Decodable, Equatable {
         case id = "_id"
         case email
         case displayName
+    }
+}
+
+struct BrowserMailBackfillState: Identifiable, Decodable, Equatable {
+    let googleAccountId: String
+    let email: String
+    let status: String
+    let query: String?
+    let pageCount: Int
+    let maxPageCount: Int?
+    let importedCount: Int
+    let scannedCount: Int
+    let resultSizeEstimate: Int?
+    let lastError: String?
+
+    var id: String {
+        googleAccountId
+    }
+
+    var isRunning: Bool {
+        status == "queued" || status == "running"
     }
 }
 
@@ -142,6 +163,7 @@ struct BrowserCalendarEvent: Identifiable, Decodable, Equatable {
 final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizing {
     @Published private(set) var authPhase: BrowserAuthPhase
     @Published private(set) var mailMessages: [BrowserMailMessage] = []
+    @Published private(set) var mailBackfillStates: [BrowserMailBackfillState] = []
     @Published private(set) var googleAccounts: [BrowserGoogleAccount] = []
     @Published private(set) var calendars: [BrowserGoogleCalendar] = []
     @Published private(set) var calendarEvents: [BrowserCalendarEvent] = []
@@ -268,6 +290,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             sessionToken = nil
             username = nil
             mailMessages = []
+            mailBackfillStates = []
             googleAccounts = []
             calendars = []
             calendarEvents = []
@@ -344,6 +367,24 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             .store(in: &cancellables)
 
         client.subscribe(
+            to: "mail:backfillStates",
+            with: ["sessionToken": sessionToken],
+            yielding: [BrowserMailBackfillState].self
+        )
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { completion in
+                    if case .failure(let error) = completion {
+                        NSLog("Convex mail backfill subscription failed: \(error)")
+                    }
+                },
+                receiveValue: { [weak self] states in
+                    self?.mailBackfillStates = states
+                }
+            )
+            .store(in: &cancellables)
+
+        client.subscribe(
             to: "calendar:calendars",
             with: ["sessionToken": sessionToken],
             yielding: [BrowserGoogleCalendar].self
@@ -378,6 +419,24 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
                 }
             )
             .store(in: &cancellables)
+    }
+
+    func startGmailBackfill(reset: Bool = false) {
+        guard let client, let sessionToken, isSignedIn else {
+            return
+        }
+
+        Task {
+            do {
+                try await client.mutation(
+                    "google:startGmailBackfill",
+                    with: ["sessionToken": sessionToken, "reset": reset]
+                )
+                refreshCloudData()
+            } catch {
+                NSLog("Gmail backfill failed to start: \(error.localizedDescription)")
+            }
+        }
     }
 
     func prepareGoogleConnection() {
