@@ -13,6 +13,10 @@ enum BrowserNavigation {
             return nil
         }
 
+        if let internalURL = BrowserInternalPage.url(from: trimmed) {
+            return internalURL
+        }
+
         if trimmed.contains("://"), let url = URL(string: trimmed) {
             return isAllowedNavigationURL(url) ? url : nil
         }
@@ -44,7 +48,11 @@ enum BrowserNavigation {
             return false
         }
 
-        return allowedURLSchemes.contains(scheme)
+        return allowedURLSchemes.contains(scheme) || BrowserInternalPage.page(for: url) != nil
+    }
+
+    static func isInternalPageURL(_ url: URL?) -> Bool {
+        BrowserInternalPage.page(for: url) != nil
     }
 
     static func isBrowserCallbackURL(_ url: URL) -> Bool {
@@ -89,6 +97,8 @@ enum BrowserNavigation {
         }
 
         switch scheme {
+        case BrowserInternalPage.scheme:
+            return .noPage
         case "https":
             return .secure
         case "http":
@@ -113,6 +123,10 @@ enum BrowserNavigation {
     }
 
     static func defaultTitle(for url: URL?) -> String {
+        if let page = BrowserInternalPage.page(for: url) {
+            return page.title
+        }
+
         if let host = url?.host(), !host.isEmpty {
             return host
         }
@@ -121,6 +135,10 @@ enum BrowserNavigation {
     }
 
     static func displayAddressText(for url: URL) -> String {
+        if BrowserInternalPage.page(for: url) != nil {
+            return url.absoluteString
+        }
+
         guard let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else {
             return url.absoluteString

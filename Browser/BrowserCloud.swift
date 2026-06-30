@@ -85,6 +85,35 @@ struct BrowserMailMessage: Identifiable, Decodable, Equatable {
     var displayDate: Date? {
         internalDate.map { Date(timeIntervalSince1970: $0 / 1000) }
     }
+
+    var displaySender: String {
+        let rawSender = from?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !rawSender.isEmpty else {
+            return "Unknown sender"
+        }
+
+        let namePart = rawSender
+            .split(separator: "<", maxSplits: 1)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? rawSender
+        let trimmedName = namePart.trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
+        return trimmedName.isEmpty ? rawSender : trimmedName
+    }
+}
+
+struct BrowserMailMessageBody: Identifiable, Decodable, Equatable {
+    let id: String
+    let providerMessageId: String
+    let bodyText: String?
+    let bodyHtml: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case providerMessageId
+        case bodyText
+        case bodyHtml
+    }
 }
 
 struct BrowserMailThread: Identifiable, Equatable {
@@ -189,6 +218,7 @@ struct BrowserCalendarEvent: Identifiable, Decodable, Equatable {
 final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizing {
     @Published private(set) var authPhase: BrowserAuthPhase
     @Published private(set) var mailMessages: [BrowserMailMessage] = []
+    @Published private(set) var mailMessageBodies: [String: BrowserMailMessageBody] = [:]
     @Published private(set) var hasMoreMailMessages = true
     @Published private(set) var isLoadingMoreMailMessages = false
     @Published private(set) var mailBackfillStates: [BrowserMailBackfillState] = []
@@ -204,6 +234,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
     private let tokenStore = BrowserSessionTokenStore()
     private var cancellables: Set<AnyCancellable> = []
     private var mailMessagesCancellable: AnyCancellable?
+    private var mailMessageBodyCancellables: [String: AnyCancellable] = [:]
     private var hasMigratedLocalState = false
     private var hasAttemptedCachedLogin = false
     private var sessionToken: String?
@@ -331,6 +362,8 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             hasAttemptedCachedLogin = true
             username = nil
             mailMessages = []
+            mailMessageBodies = [:]
+            mailMessageBodyCancellables.removeAll()
             mailMessagesLimit = mailMessagePageSize
             hasMoreMailMessages = true
             isLoadingMoreMailMessages = false
@@ -458,6 +491,41 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
         isLoadingMoreMailMessages = true
         mailMessagesLimit += mailMessagePageSize
         subscribeToMailMessages(limit: mailMessagesLimit)
+    }
+
+    func loadMailMessageBody(_ message: BrowserMailMessage) {
+        guard mailMessageBodies[message.providerMessageId] == nil,
+              mailMessageBodyCancellables[message.providerMessageId] == nil,
+              let client,
+              let sessionToken else {
+            return
+        }
+
+        mailMessageBodyCancellables[message.providerMessageId] = client.subscribe(
+            to: "mail:messageBody",
+            with: [
+                "sessionToken": sessionToken,
+                "googleAccountId": message.googleAccountId,
+                "providerMessageId": message.providerMessageId
+            ],
+            yielding: BrowserMailMessageBody?.self
+        )
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    self?.mailMessageBodyCancellables[message.providerMessageId] = nil
+                    if case .failure(let error) = completion {
+                        NSLog("Convex mail body subscription failed: \(error)")
+                    }
+                },
+                receiveValue: { [weak self] body in
+                    if let body {
+                        self?.mailMessageBodies[message.providerMessageId] = body
+                    }
+                    self?.mailMessageBodyCancellables[message.providerMessageId]?.cancel()
+                    self?.mailMessageBodyCancellables[message.providerMessageId] = nil
+                }
+            )
     }
 
     private func subscribeToMailMessages(limit: Double) {

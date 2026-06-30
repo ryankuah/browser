@@ -20,6 +20,7 @@
 		2B336D852C3D4C8700B63C2B /* BrowserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D862C3D4C8700B63C2B /* BrowserModels.swift */; };
 		2B336D872C3D4C8700B63C2B /* BrowserTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D882C3D4C8700B63C2B /* BrowserTab.swift */; };
 		2B336D892C3D4C8700B63C2B /* BrowserNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D8A2C3D4C8700B63C2B /* BrowserNavigation.swift */; };
+		2BC100112D1D000100000001 /* BrowserInternalPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100102D1D000100000001 /* BrowserInternalPage.swift */; };
 		2B336D8B2C3D4C8700B63C2B /* BrowserPersistenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B336D8C2C3D4C8700B63C2B /* BrowserPersistenceStore.swift */; };
 		2B336D912C3D4C8800B63C2B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2B336D902C3D4C8800B63C2B /* Assets.xcassets */; };
 		2B336D942C3D51A600B63C2B /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 2B336D932C3D51A600B63C2B /* Sparkle */; };
@@ -63,6 +64,7 @@
 		2B336D862C3D4C8700B63C2B /* BrowserModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserModels.swift; sourceTree = "<group>"; };
 		2B336D882C3D4C8700B63C2B /* BrowserTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserTab.swift; sourceTree = "<group>"; };
 		2B336D8A2C3D4C8700B63C2B /* BrowserNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserNavigation.swift; sourceTree = "<group>"; };
+		2BC100102D1D000100000001 /* BrowserInternalPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserInternalPage.swift; sourceTree = "<group>"; };
 		2B336D8C2C3D4C8700B63C2B /* BrowserPersistenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPersistenceStore.swift; sourceTree = "<group>"; };
 		2B336D902C3D4C8800B63C2B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2B9C988C00DC294A0C77A5F8 /* BrowserConsolePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserConsolePanel.swift; sourceTree = "<group>"; };
@@ -124,6 +126,7 @@
 					2B336D712C3D4C8300B63C2B /* BrowserWindowView.swift */,
 					2B336D862C3D4C8700B63C2B /* BrowserModels.swift */,
 					2B336D8A2C3D4C8700B63C2B /* BrowserNavigation.swift */,
+					2BC100102D1D000100000001 /* BrowserInternalPage.swift */,
 					2BC1000C2D1B000100000001 /* BrowserExternalURLRouter.swift */,
 					2B336D7D2C3D4C8400B63C2B /* BrowserState.swift */,
 					2B336D882C3D4C8700B63C2B /* BrowserTab.swift */,
@@ -266,6 +269,7 @@
 					2B336D722C3D4C8300B63C2B /* BrowserWindowView.swift in Sources */,
 					2B336D852C3D4C8700B63C2B /* BrowserModels.swift in Sources */,
 					2B336D892C3D4C8700B63C2B /* BrowserNavigation.swift in Sources */,
+					2BC100112D1D000100000001 /* BrowserInternalPage.swift in Sources */,
 					2BC1000D2D1B000100000001 /* BrowserExternalURLRouter.swift in Sources */,
 					2B336D682C3D4C8000B63C2B /* WebView.swift in Sources */,
 					2B336D7E2C3D4C8400B63C2B /* BrowserState.swift in Sources */,

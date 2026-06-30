@@ -49,6 +49,8 @@ private final class PassthroughHoverView: NSView {
 
 private struct BrowserContentView: View {
     @ObservedObject var tab: BrowserTab
+    @ObservedObject var browser: BrowserState
+    @ObservedObject var session: BrowserSessionController
 
     let shouldMountWebView: Bool
     let webCornerRadius: CGFloat
@@ -61,7 +63,17 @@ private struct BrowserContentView: View {
             Color.white
                 .allowsHitTesting(false)
 
-            if let failure = tab.pageFailure {
+            if let page = BrowserInternalPage.page(for: tab.url) {
+                BrowserInternalPageView(
+                    page: page,
+                    browser: browser,
+                    session: session,
+                    onClose: {
+                        browser.closeTab(id: tab.id)
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let failure = tab.pageFailure {
                 BrowserFailureView(
                     failure: failure,
                     onRetry: onRetryFailure
@@ -77,6 +89,26 @@ private struct BrowserContentView: View {
                 )
                 .id(tab.id)
             }
+        }
+    }
+}
+
+private struct BrowserInternalPageView: View {
+    let page: BrowserInternalPage
+    @ObservedObject var browser: BrowserState
+    @ObservedObject var session: BrowserSessionController
+    let onClose: () -> Void
+
+    var body: some View {
+        switch page {
+        case .settings:
+            BrowserFullSettingsPage(browser: browser, onClose: onClose)
+        case .history:
+            BrowserHistoryPage(browser: browser, onClose: onClose)
+        case .mail:
+            BrowserMailPage(browser: browser, session: session, onClose: onClose)
+        case .calendar:
+            BrowserCalendarPage(browser: browser, session: session, onClose: onClose)
         }
     }
 }
@@ -110,11 +142,7 @@ struct BrowserWindowView: View {
     @State private var isAddressPromptPresented = false
     @State private var isConsolePresented = false
     @State private var isSettingsPresented = false
-    @State private var isFullSettingsPresented = false
     @State private var isFindPresented = false
-    @State private var isHistoryPresented = false
-    @State private var isMailPresented = false
-    @State private var isCalendarPresented = false
     @State private var findNavigationRequest: BrowserFindNavigationRequest?
     @State private var commandKeyMonitor: Any?
     @State private var pendingSidebarClose: DispatchWorkItem?
@@ -186,6 +214,8 @@ struct BrowserWindowView: View {
                     if let activeTab = browser.activeTab {
                         BrowserContentView(
                             tab: activeTab,
+                            browser: browser,
+                            session: session,
                             shouldMountWebView: browser.shouldMountWebView(for: activeTab),
                             webCornerRadius: activeWebCornerRadius,
                             occlusionRects: isElementFullscreenActive ? [] : webViewOcclusionRects(
@@ -391,68 +421,6 @@ struct BrowserWindowView: View {
                     .zIndex(6)
                 }
 
-                if isFullSettingsPresented {
-                    BrowserFullSettingsPage(
-                        browser: browser,
-                        onClose: {
-                            withAnimation(.easeInOut(duration: 0.16)) {
-                                isFullSettingsPresented = false
-                            }
-                        }
-                    )
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .webViewOcclusionRegion()
-                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
-                    .zIndex(7)
-                }
-
-                if isHistoryPresented {
-                    BrowserHistoryPage(
-                        browser: browser,
-                        onClose: {
-                            withAnimation(.easeInOut(duration: 0.16)) {
-                                isHistoryPresented = false
-                            }
-                        }
-                    )
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .webViewOcclusionRegion()
-                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
-                    .zIndex(7)
-                }
-
-                if isMailPresented {
-                    BrowserMailPage(
-                        browser: browser,
-                        session: session,
-                        onClose: {
-                            withAnimation(.easeInOut(duration: 0.16)) {
-                                isMailPresented = false
-                            }
-                        }
-                    )
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .webViewOcclusionRegion()
-                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
-                    .zIndex(7)
-                }
-
-                if isCalendarPresented {
-                    BrowserCalendarPage(
-                        browser: browser,
-                        session: session,
-                        onClose: {
-                            withAnimation(.easeInOut(duration: 0.16)) {
-                                isCalendarPresented = false
-                            }
-                        }
-                    )
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .webViewOcclusionRegion()
-                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
-                    .zIndex(7)
-                }
-
                 if let oauthURL = session.oauthPresentationURL {
                     BrowserOAuthOverlayView(
                         url: oauthURL,
@@ -505,11 +473,7 @@ struct BrowserWindowView: View {
             .animation(.easeOut(duration: 0.12), value: isNewTabPromptPresented)
             .animation(.easeOut(duration: 0.12), value: isAddressPromptPresented)
             .animation(.easeInOut(duration: 0.16), value: isSettingsPresented)
-            .animation(.easeInOut(duration: 0.16), value: isFullSettingsPresented)
             .animation(.easeInOut(duration: 0.16), value: isFindPresented)
-            .animation(.easeInOut(duration: 0.16), value: isHistoryPresented)
-            .animation(.easeInOut(duration: 0.16), value: isMailPresented)
-            .animation(.easeInOut(duration: 0.16), value: isCalendarPresented)
             .animation(.easeInOut(duration: 0.16), value: session.oauthPresentationURL)
             .animation(.easeInOut(duration: 0.16), value: isConsolePresented)
             .animation(.easeInOut(duration: 0.16), value: isProfileMenuVisible)
@@ -566,7 +530,7 @@ struct BrowserWindowView: View {
                 requestFindNavigation(backwards: true)
             },
             showHistory: {
-                showHistoryPage()
+                openInternalPage(.history)
             },
             zoomIn: {
                 browser.zoomInActiveTab()
@@ -639,33 +603,6 @@ struct BrowserWindowView: View {
 
             let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
             if modifiers.isEmpty && event.keyCode == 53 {
-                if isFullSettingsPresented {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        isFullSettingsPresented = false
-                    }
-                    return nil
-                }
-
-                if isHistoryPresented {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        isHistoryPresented = false
-                    }
-                    return nil
-                }
-
-                if isMailPresented {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        isMailPresented = false
-                    }
-                    return nil
-                }
-
-                if isCalendarPresented {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        isCalendarPresented = false
-                    }
-                    return nil
-                }
             }
 
             guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
@@ -708,7 +645,7 @@ struct BrowserWindowView: View {
             }
 
             if characters == "y" {
-                showHistoryPage()
+                openInternalPage(.history)
                 return nil
             }
 
@@ -746,9 +683,6 @@ struct BrowserWindowView: View {
     }
 
     private func showFindPanel() {
-        isHistoryPresented = false
-        isMailPresented = false
-        isCalendarPresented = false
         withAnimation(.easeInOut(duration: 0.16)) {
             isFindPresented = true
         }
@@ -769,48 +703,10 @@ struct BrowserWindowView: View {
         findNavigationRequest = BrowserFindNavigationRequest(backwards: backwards)
     }
 
-    private func showHistoryPage() {
+    private func openInternalPage(_ page: BrowserInternalPage) {
         isFindPresented = false
-        isFullSettingsPresented = false
         isSettingsPresented = false
-        isMailPresented = false
-        isCalendarPresented = false
-        withAnimation(.easeInOut(duration: 0.16)) {
-            isHistoryPresented = true
-        }
-    }
-
-    private func showMailPage() {
-        isFindPresented = false
-        isFullSettingsPresented = false
-        isSettingsPresented = false
-        isHistoryPresented = false
-        isCalendarPresented = false
-        withAnimation(.easeInOut(duration: 0.16)) {
-            isMailPresented = true
-        }
-    }
-
-    private func showCalendarPage() {
-        isFindPresented = false
-        isFullSettingsPresented = false
-        isSettingsPresented = false
-        isHistoryPresented = false
-        isMailPresented = false
-        withAnimation(.easeInOut(duration: 0.16)) {
-            isCalendarPresented = true
-        }
-    }
-
-    private func showFullSettingsPage() {
-        isFindPresented = false
-        isHistoryPresented = false
-        isMailPresented = false
-        isCalendarPresented = false
-        isSettingsPresented = false
-        withAnimation(.easeInOut(duration: 0.16)) {
-            isFullSettingsPresented = true
-        }
+        _ = browser.navigateAddress(page.url.absoluteString)
     }
 
     private func sidebarOverlay(width: CGFloat, height: CGFloat, leadingCaptureWidth: CGFloat = 0) -> some View {
@@ -825,20 +721,14 @@ struct BrowserWindowView: View {
                 window: windowReference.window,
                 cornerRadius: webCornerRadius,
                 onOpenFullSettings: {
-                    showFullSettingsPage()
+                    openInternalPage(.settings)
                 },
                 onOpenAddressPrompt: {
                     isNewTabPromptPresented = false
                     isAddressPromptPresented = true
                 },
                 onOpenHistory: {
-                    showHistoryPage()
-                },
-                onOpenMail: {
-                    showMailPage()
-                },
-                onOpenCalendar: {
-                    showCalendarPage()
+                    openInternalPage(.history)
                 }
             )
             .frame(width: width, height: height, alignment: .topLeading)

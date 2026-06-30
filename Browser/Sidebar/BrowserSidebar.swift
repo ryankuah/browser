@@ -10,8 +10,6 @@ struct BrowserSidebar: View {
     let onOpenFullSettings: () -> Void
     let onOpenAddressPrompt: () -> Void
     let onOpenHistory: () -> Void
-    let onOpenMail: () -> Void
-    let onOpenCalendar: () -> Void
 
     @State private var isDownloadsPresented = false
     @State private var draggedTabID: BrowserTab.ID?
@@ -35,9 +33,7 @@ struct BrowserSidebar: View {
                 isPresented: $isDownloadsPresented,
                 isSettingsPresented: $isSettingsPresented,
                 onOpenFullSettings: onOpenFullSettings,
-                onOpenHistory: onOpenHistory,
-                onOpenMail: onOpenMail,
-                onOpenCalendar: onOpenCalendar
+                onOpenHistory: onOpenHistory
             )
                 .padding(.horizontal, 10)
                 .padding(.bottom, 12)

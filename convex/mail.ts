@@ -43,6 +43,34 @@ export const attachmentsForMessage = query({
   },
 });
 
+export const messageBody = query({
+  args: {
+    sessionToken: v.string(),
+    googleAccountId: v.id("googleAccounts"),
+    providerMessageId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getCurrentUser(ctx, args.sessionToken);
+    const message = await ctx.db
+      .query("gmailMessages")
+      .withIndex("by_account_message", (q) =>
+        q.eq("googleAccountId", args.googleAccountId).eq("providerMessageId", args.providerMessageId),
+      )
+      .unique();
+
+    if (!message || message.userId !== userId) {
+      return null;
+    }
+
+    return {
+      _id: message._id,
+      providerMessageId: message.providerMessageId,
+      bodyText: message.bodyText,
+      bodyHtml: message.bodyHtml,
+    };
+  },
+});
+
 export const backfillStates = query({
   args: {
     sessionToken: v.string(),

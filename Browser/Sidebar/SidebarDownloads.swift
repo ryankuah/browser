@@ -8,8 +8,6 @@ struct DownloadsFooter: View {
     @Binding var isSettingsPresented: Bool
     let onOpenFullSettings: () -> Void
     let onOpenHistory: () -> Void
-    let onOpenMail: () -> Void
-    let onOpenCalendar: () -> Void
 
     private var activeDownloadCount: Int {
         browser.downloads.filter { $0.status == .inProgress }.count
@@ -55,20 +53,6 @@ struct DownloadsFooter: View {
                     label: "History"
                 ) {
                     onOpenHistory()
-                }
-
-                SidebarIconButton(
-                    systemName: "envelope",
-                    label: "Mail"
-                ) {
-                    onOpenMail()
-                }
-
-                SidebarIconButton(
-                    systemName: "calendar",
-                    label: "Calendar"
-                ) {
-                    onOpenCalendar()
                 }
 
                 DownloadsIconButton(

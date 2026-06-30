@@ -443,7 +443,11 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     func shouldMountWebView(for tab: BrowserTab) -> Bool {
-        tab.url != nil || mountRequestedTabIDs.contains(tab.id) || mountedTabIDs.contains(tab.id)
+        if BrowserNavigation.isInternalPageURL(tab.url) {
+            return false
+        }
+
+        return tab.url != nil || mountRequestedTabIDs.contains(tab.id) || mountedTabIDs.contains(tab.id)
     }
 
     func webViewDidMount(for tabID: BrowserTab.ID) {

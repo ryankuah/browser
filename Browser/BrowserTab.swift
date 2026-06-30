@@ -38,7 +38,11 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     var displaySubtitle: String {
-        url?.absoluteString ?? "No page loaded"
+        if let page = BrowserInternalPage.page(for: url) {
+            return page.url.absoluteString
+        }
+
+        return url?.absoluteString ?? "No page loaded"
     }
 
     var addressText: String {
@@ -107,6 +111,8 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         self.url = url
         title = BrowserNavigation.defaultTitle(for: url)
         isLoading = false
+        canGoBack = false
+        canGoForward = false
         originSecurityState = BrowserNavigation.originSecurityState(for: url)
         pageFailure = nil
         clearFavicon()
@@ -121,15 +127,27 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         self.url = url
         pendingNavigationURL = url
         title = BrowserNavigation.defaultTitle(for: url)
-        isLoading = true
+        isLoading = !BrowserNavigation.isInternalPageURL(url)
+        canGoBack = BrowserNavigation.isInternalPageURL(url) ? false : canGoBack
+        canGoForward = BrowserNavigation.isInternalPageURL(url) ? false : canGoForward
         originSecurityState = BrowserNavigation.originSecurityState(for: url)
         pageFailure = nil
         clearFavicon()
+        if BrowserNavigation.isInternalPageURL(url) {
+            pendingNavigationURL = nil
+            onStateDidChange?(self)
+            return
+        }
+
         webView.load(URLRequest(url: url))
         refreshFromWebView()
     }
 
     func goBack() {
+        guard !BrowserNavigation.isInternalPageURL(url) else {
+            return
+        }
+
         guard webView.canGoBack else {
             return
         }
@@ -140,6 +158,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     func goForward() {
+        guard !BrowserNavigation.isInternalPageURL(url) else {
+            return
+        }
+
         guard webView.canGoForward else {
             return
         }
@@ -150,6 +172,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     func reloadOrStop() {
+        guard !BrowserNavigation.isInternalPageURL(url) else {
+            return
+        }
+
         if webView.isLoading {
             webView.stopLoading()
         } else if pageFailure != nil {
@@ -163,6 +189,10 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     func retryPageFailure() {
+        guard !BrowserNavigation.isInternalPageURL(url) else {
+            return
+        }
+
         guard let retryURL = pageFailure?.url ?? webView.url ?? url else {
             return
         }
@@ -196,6 +226,11 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     }
 
     func findInPage(_ query: String, backwards: Bool, completion: @escaping (Bool) -> Void) {
+        guard !BrowserNavigation.isInternalPageURL(url) else {
+            completion(false)
+            return
+        }
+
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
             clearFindSelection()
