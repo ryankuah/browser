@@ -192,7 +192,7 @@ EOF
     exit 1
   fi
 
-  if [[ "$BROWSER_CONVEX_URL_SOURCE" == *"CONVEX_URL"* ]]; then
+  if [[ "$BROWSER_CONVEX_URL_SOURCE" == "CONVEX_URL" || "$BROWSER_CONVEX_URL_SOURCE" == ".env.local CONVEX_URL" ]]; then
     local deployment
     deployment="${CONVEX_DEPLOYMENT:-}"
     if [[ -z "$deployment" ]]; then
