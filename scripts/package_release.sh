@@ -192,26 +192,40 @@ set_dmg_finder_layout() {
   local background_path="$mount_dir/.background/background.png"
 
   /usr/bin/osascript <<OSA
+set targetFolder to POSIX file "$mount_dir" as alias
+set backgroundImage to POSIX file "$background_path" as alias
 tell application "Finder"
   activate
-  open POSIX file "$mount_dir"
+  open targetFolder
   delay 1
-  set targetWindow to Finder window 1
+  set targetWindow to Finder window "$volume_name"
   set current view of targetWindow to icon view
-  set toolbar visible of targetWindow to false
-  set statusbar visible of targetWindow to false
+  try
+    set toolbar visible of targetWindow to false
+  end try
+  try
+    set statusbar visible of targetWindow to false
+  end try
   set bounds of targetWindow to {100, 100, 760, 500}
   set theViewOptions to the icon view options of targetWindow
   set arrangement of theViewOptions to not arranged
   set icon size of theViewOptions to 112
   set text size of theViewOptions to 12
-  set background picture of theViewOptions to POSIX file "$background_path"
+  set background picture of theViewOptions to backgroundImage
   set position of item "Browser.app" of targetWindow to {190, 252}
   set position of item "Applications" of targetWindow to {470, 252}
+  update targetFolder
   delay 2
   close targetWindow
 end tell
 OSA
+
+  local bless_output
+  if ! bless_output="$(/usr/sbin/bless --folder "$mount_dir" --openfolder "$mount_dir" 2>&1)"; then
+    if [[ "$bless_output" != *"openfolder' is not supported on Apple Silicon"* ]]; then
+      echo "Warning: could not set DMG auto-open folder: $bless_output" >&2
+    fi
+  fi
 
   [[ -f "$mount_dir/.DS_Store" ]] || {
     echo "Finder did not persist DMG layout metadata." >&2

@@ -130,6 +130,11 @@ struct BrowserSettingsPanel: View {
                     Divider()
                         .opacity(0.38)
 
+                    DefaultBrowserSettingsSection()
+
+                    Divider()
+                        .opacity(0.38)
+
                     VStack(alignment: .leading, spacing: 7) {
                         Text("Page Zoom")
                             .font(.system(size: 11, weight: .medium))
@@ -202,6 +207,206 @@ struct BrowserSettingsPanel: View {
         }
 
         return browser.profiles.first { $0.id == editingProfileID }
+    }
+}
+
+@MainActor
+private final class DefaultBrowserController: ObservableObject {
+    @Published private(set) var isDefaultBrowser = false
+    @Published private(set) var isUpdating = false
+    @Published private(set) var errorMessage: String?
+
+    private let urlSchemes = ["http", "https"]
+
+    func refresh() {
+        isDefaultBrowser = urlSchemes.allSatisfy(Self.isCurrentAppDefaultHandler(for:))
+    }
+
+    func setAsDefaultBrowser() {
+        guard !isUpdating else {
+            return
+        }
+
+        isUpdating = true
+        errorMessage = nil
+
+        Task { @MainActor in
+            do {
+                for scheme in urlSchemes {
+                    try await Self.setCurrentAppAsDefaultHandler(for: scheme)
+                }
+                refresh()
+                if !isDefaultBrowser {
+                    errorMessage = "macOS did not confirm the change."
+                }
+            } catch {
+                refresh()
+                errorMessage = error.localizedDescription
+            }
+
+            isUpdating = false
+        }
+    }
+
+    private static func isCurrentAppDefaultHandler(for scheme: String) -> Bool {
+        guard let probeURL = URL(string: "\(scheme)://example.com"),
+              let defaultApplicationURL = NSWorkspace.shared.urlForApplication(toOpen: probeURL),
+              let defaultBundleIdentifier = Bundle(url: defaultApplicationURL)?.bundleIdentifier,
+              let currentBundleIdentifier = Bundle.main.bundleIdentifier else {
+            return false
+        }
+
+        return defaultBundleIdentifier == currentBundleIdentifier
+    }
+
+    private static func setCurrentAppAsDefaultHandler(for scheme: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            NSWorkspace.shared.setDefaultApplication(
+                at: Bundle.main.bundleURL,
+                toOpenURLsWithScheme: scheme
+            ) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+}
+
+private struct DefaultBrowserSettingsSection: View {
+    @StateObject private var controller = DefaultBrowserController()
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Default Browser")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Button {
+                controller.setAsDefaultBrowser()
+            } label: {
+                HStack(spacing: 7) {
+                    if controller.isUpdating {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: iconSystemName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 14, height: 14)
+                    }
+
+                    Text(title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+                .padding(.horizontal, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(controller.isUpdating || controller.isDefaultBrowser)
+            .foregroundStyle(foregroundStyle)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(backgroundColor)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(borderColor, lineWidth: 1)
+            }
+            .opacity(controller.isDefaultBrowser ? 0.86 : 1)
+            .onHover { isHovered = $0 }
+            .cursor(controller.isUpdating || controller.isDefaultBrowser ? .arrow : .pointingHand)
+            .accessibilityLabel(title)
+            .help(helpText)
+        }
+        .onAppear {
+            controller.refresh()
+        }
+    }
+
+    private var title: String {
+        if controller.isUpdating {
+            return "Setting Default..."
+        }
+
+        if controller.isDefaultBrowser {
+            return "Default Browser"
+        }
+
+        if controller.errorMessage != nil {
+            return "Try Again"
+        }
+
+        return "Make Default Browser"
+    }
+
+    private var iconSystemName: String {
+        if controller.isDefaultBrowser {
+            return "checkmark.circle.fill"
+        }
+
+        if controller.errorMessage != nil {
+            return "exclamationmark.triangle.fill"
+        }
+
+        return "globe"
+    }
+
+    private var foregroundStyle: Color {
+        if controller.isDefaultBrowser {
+            return .green
+        }
+
+        if controller.errorMessage != nil {
+            return .orange
+        }
+
+        return .primary
+    }
+
+    private var backgroundColor: Color {
+        if controller.isDefaultBrowser {
+            return Color.green.opacity(0.14)
+        }
+
+        if controller.errorMessage != nil {
+            return Color.orange.opacity(0.12)
+        }
+
+        return isHovered ? Color.primary.opacity(0.08) : Color.primary.opacity(0.04)
+    }
+
+    private var borderColor: Color {
+        if controller.isDefaultBrowser {
+            return Color.green.opacity(0.34)
+        }
+
+        if controller.errorMessage != nil {
+            return Color.orange.opacity(0.34)
+        }
+
+        return Color.primary.opacity(0.1)
+    }
+
+    private var helpText: String {
+        if let errorMessage = controller.errorMessage {
+            return "Default browser change failed: \(errorMessage)"
+        }
+
+        if controller.isDefaultBrowser {
+            return "Browser is the default browser"
+        }
+
+        return "Set Browser as the default browser"
     }
 }
 
