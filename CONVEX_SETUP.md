@@ -18,7 +18,7 @@ npx convex env set GOOGLE_GMAIL_PUBSUB_TOPIC projects/YOUR_PROJECT/topics/YOUR_T
 npx convex env set GOOGLE_TOKEN_ENCRYPTION_SECRET "a-long-random-secret"
 ```
 
-For local app testing, set `BROWSER_CONVEX_URL` before launching from Xcode, or put your Convex client URL in `BrowserConvexURL` in `Browser/Info.plist`.
+For local app testing, set `BROWSER_CONVEX_URL` or `CONVEX_URL` before launching from Xcode. Release packaging reads `BROWSER_CONVEX_URL` first, then `CONVEX_URL`, from the shell or `.env.local` and embeds the resolved value in the app's `BrowserConvexURL` Info.plist key before signing.
 
 ## App Accounts
 

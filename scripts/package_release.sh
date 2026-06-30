@@ -15,6 +15,7 @@ REPO_URL="${REPO_URL:-https://github.com/ryankuah/browser}"
 NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-browser-notary}"
 NOTARIZE="${NOTARIZE:-1}"
 DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-}"
+BROWSER_CONVEX_URL="${BROWSER_CONVEX_URL:-}"
 ATTACHED_DMG_DEVICE=""
 
 cleanup() {
@@ -95,6 +96,90 @@ verify_app_for_distribution() {
 
   verify_app_signature "$app_path"
   spctl --assess --type execute --verbose=4 "$app_path"
+}
+
+read_env_file_value() {
+  local key="$1"
+  local env_file="$ROOT_DIR/.env.local"
+
+  [[ -f "$env_file" ]] || return 1
+
+  awk -v key="$key" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+
+    /^[[:space:]]*(#|$)/ {
+      next
+    }
+
+    {
+      line = $0
+      sub(/^[[:space:]]*export[[:space:]]+/, "", line)
+      equals = index(line, "=")
+      if (equals == 0) {
+        next
+      }
+
+      name = trim(substr(line, 1, equals - 1))
+      if (name != key) {
+        next
+      }
+
+      value = trim(substr(line, equals + 1))
+      sub(/[[:space:]]+#.*$/, "", value)
+      if ((substr(value, 1, 1) == "\"" && substr(value, length(value), 1) == "\"") ||
+          (substr(value, 1, 1) == "'"'"'" && substr(value, length(value), 1) == "'"'"'")) {
+        value = substr(value, 2, length(value) - 2)
+      }
+
+      print value
+      found = 1
+      exit
+    }
+
+    END {
+      if (!found) {
+        exit 1
+      }
+    }
+  ' "$env_file"
+}
+
+resolve_browser_convex_url() {
+  local value="$BROWSER_CONVEX_URL"
+
+  if [[ -z "$value" ]]; then
+    value="$(read_env_file_value BROWSER_CONVEX_URL || true)"
+  fi
+  if [[ -z "$value" ]]; then
+    value="${CONVEX_URL:-}"
+  fi
+  if [[ -z "$value" ]]; then
+    value="$(read_env_file_value CONVEX_URL || true)"
+  fi
+
+  if [[ -z "$value" ]]; then
+    cat >&2 <<'EOF'
+Missing Browser Convex URL.
+
+Set BROWSER_CONVEX_URL or CONVEX_URL in your shell, or add one of them to
+.env.local, then rerun:
+  scripts/package_release.sh
+EOF
+    exit 1
+  fi
+
+  printf '%s\n' "$value"
+}
+
+embed_release_configuration() {
+  local app_path="$1"
+  local info_plist="$app_path/Contents/Info.plist"
+
+  /usr/bin/plutil -replace BrowserConvexURL -string "$BROWSER_CONVEX_URL" "$info_plist"
 }
 
 create_dmg_background() {
@@ -233,6 +318,8 @@ OSA
   }
 }
 
+BROWSER_CONVEX_URL="$(resolve_browser_convex_url)"
+
 xcodebuild \
   -project "$PROJECT" \
   -scheme "$SCHEME" \
@@ -243,6 +330,8 @@ xcodebuild \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   ENABLE_HARDENED_RUNTIME=YES \
   clean build
+
+embed_release_configuration "$APP_PATH"
 
 if [[ -d "$SPARKLE_FRAMEWORK" ]]; then
   find "$SPARKLE_FRAMEWORK" -type d \( -name '*.xpc' -o -name '*.app' \) -print0 |

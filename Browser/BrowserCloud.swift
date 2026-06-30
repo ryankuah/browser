@@ -23,9 +23,22 @@ protocol BrowserCloudSynchronizing: AnyObject, Sendable {
 }
 
 struct BrowserCloudConfiguration {
-    static let convexDeploymentURL = ProcessInfo.processInfo.environment["BROWSER_CONVEX_URL"]
-        ?? Bundle.main.object(forInfoDictionaryKey: "BrowserConvexURL") as? String
-        ?? ""
+    static let convexDeploymentURL = firstConfiguredValue(
+        ProcessInfo.processInfo.environment["BROWSER_CONVEX_URL"],
+        ProcessInfo.processInfo.environment["CONVEX_URL"],
+        Bundle.main.object(forInfoDictionaryKey: "BrowserConvexURL") as? String
+    )
+
+    private static func firstConfiguredValue(_ values: String?...) -> String {
+        for value in values {
+            let trimmedValue = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedValue.isEmpty {
+                return trimmedValue
+            }
+        }
+
+        return ""
+    }
 }
 
 struct BrowserCloudHistoryVisit: Sendable {
@@ -136,7 +149,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
     init(deploymentURL: String = BrowserCloudConfiguration.convexDeploymentURL) {
         self.deploymentURL = deploymentURL
         guard !deploymentURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            authPhase = .unavailable("Set BROWSER_CONVEX_URL to your Convex deployment URL.")
+            authPhase = .unavailable("Set BROWSER_CONVEX_URL, CONVEX_URL, or BrowserConvexURL to your Convex deployment URL.")
             client = nil
             return
         }
