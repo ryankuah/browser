@@ -1,9 +1,37 @@
 import SwiftUI
 import Sparkle
+import Carbon
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let updateController = BrowserUpdateController()
+
+    override init() {
+        super.init()
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        urls.forEach { BrowserExternalURLRouter.shared.openExternalURL($0) }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        !BrowserExternalURLRouter.shared.focusExistingWindow()
+    }
+
+    @objc private func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
+        guard let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+              let url = URL(string: urlString) else {
+            return
+        }
+
+        BrowserExternalURLRouter.shared.openExternalURL(url)
+    }
 }
 
 @MainActor
@@ -185,12 +213,14 @@ final class BrowserUpdateController: NSObject, ObservableObject, SPUUserDriver {
 struct BrowserApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var session = BrowserSessionController()
+    @ObservedObject private var externalURLRouter = BrowserExternalURLRouter.shared
 
     var body: some Scene {
         WindowGroup {
             BrowserAuthGate(session: session) {
                 BrowserWindowView(
                     updateController: appDelegate.updateController,
+                    externalURLRouter: externalURLRouter,
                     session: session
                 )
             }

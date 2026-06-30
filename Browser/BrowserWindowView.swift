@@ -99,6 +99,7 @@ struct BrowserWindowView: View {
     @StateObject private var browser = BrowserState()
     @StateObject private var windowReference = WindowReference()
     @ObservedObject var updateController: BrowserUpdateController
+    @ObservedObject var externalURLRouter: BrowserExternalURLRouter
     @ObservedObject var session: BrowserSessionController
 
     @State private var isLeftZoneHovered = false
@@ -119,6 +120,7 @@ struct BrowserWindowView: View {
     @State private var pendingSidebarClose: DispatchWorkItem?
     @State private var pendingProfileMenuClose: DispatchWorkItem?
     @State private var webViewOcclusionRootRects: [CGRect] = []
+    @State private var externalURLRegistrationID: UUID?
 
     private let topChromeHeight: CGFloat = 6
     private let sidebarHoverWidth: CGFloat = 6
@@ -506,6 +508,11 @@ struct BrowserWindowView: View {
                     profileColor: browser.profileNSColor
                 )
                 windowReference.update(window)
+                externalURLRegistrationID = externalURLRouter.register(
+                    browser: browser,
+                    window: window,
+                    existingID: externalURLRegistrationID
+                )
             }
         )
         .focusedSceneValue(\.browserCommandActions, BrowserCommandActions(
@@ -568,9 +575,6 @@ struct BrowserWindowView: View {
                 browser.showDebugJavaScriptPrompt()
             }
         ))
-        .onOpenURL { url in
-            browser.openExternalURL(url)
-        }
         .onAppear {
             browser.setCloudSync(session)
             session.migrateLocalStateIfNeeded(from: browser)
@@ -596,6 +600,8 @@ struct BrowserWindowView: View {
             webViewOcclusionRootRects = []
         }
         .onDisappear {
+            externalURLRouter.unregister(id: externalURLRegistrationID)
+            externalURLRegistrationID = nil
             removeCommandKeyMonitor()
         }
     }

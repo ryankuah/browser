@@ -43,6 +43,7 @@
 		2BC100032D1A000100000001 /* BrowserMailPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100022D1A000100000001 /* BrowserMailPage.swift */; };
 		2BC100052D1A000100000001 /* BrowserCalendarPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100042D1A000100000001 /* BrowserCalendarPage.swift */; };
 		2BC1000B2D1A000100000001 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 2BC1000A2D1A000100000001 /* ConvexMobile */; };
+		2BC1000D2D1B000100000001 /* BrowserExternalURLRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC1000C2D1B000100000001 /* BrowserExternalURLRouter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -82,6 +83,7 @@
 		2BC100002D1A000100000001 /* BrowserCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCloud.swift; sourceTree = "<group>"; };
 		2BC100022D1A000100000001 /* BrowserMailPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserMailPage.swift; sourceTree = "<group>"; };
 		2BC100042D1A000100000001 /* BrowserCalendarPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCalendarPage.swift; sourceTree = "<group>"; };
+		2BC1000C2D1B000100000001 /* BrowserExternalURLRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserExternalURLRouter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -120,6 +122,7 @@
 					2B336D712C3D4C8300B63C2B /* BrowserWindowView.swift */,
 					2B336D862C3D4C8700B63C2B /* BrowserModels.swift */,
 					2B336D8A2C3D4C8700B63C2B /* BrowserNavigation.swift */,
+					2BC1000C2D1B000100000001 /* BrowserExternalURLRouter.swift */,
 					2B336D7D2C3D4C8400B63C2B /* BrowserState.swift */,
 					2B336D882C3D4C8700B63C2B /* BrowserTab.swift */,
 					2BC100002D1A000100000001 /* BrowserCloud.swift */,
@@ -260,6 +263,7 @@
 					2B336D722C3D4C8300B63C2B /* BrowserWindowView.swift in Sources */,
 					2B336D852C3D4C8700B63C2B /* BrowserModels.swift in Sources */,
 					2B336D892C3D4C8700B63C2B /* BrowserNavigation.swift in Sources */,
+					2BC1000D2D1B000100000001 /* BrowserExternalURLRouter.swift in Sources */,
 					2B336D682C3D4C8000B63C2B /* WebView.swift in Sources */,
 					2B336D7E2C3D4C8400B63C2B /* BrowserState.swift in Sources */,
 					2B336D872C3D4C8700B63C2B /* BrowserTab.swift in Sources */,

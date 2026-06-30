@@ -369,7 +369,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             return
         }
 
-        NSWorkspace.shared.open(googleConnectURL)
+        BrowserExternalURLRouter.shared.openExternalURL(googleConnectURL)
     }
 
     func setCalendar(_ calendar: BrowserGoogleCalendar, selected: Bool) {
