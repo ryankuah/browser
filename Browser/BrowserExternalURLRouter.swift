@@ -21,10 +21,23 @@ final class BrowserExternalURLRouter: ObservableObject {
 
     private var registrations: [Registration] = []
     private var pendingURLs: [URL] = []
+    private weak var primaryWindow: NSWindow?
 
     private init() {}
 
-    func register(browser: BrowserState, window: NSWindow, existingID: UUID?) -> UUID {
+    func registerApplicationWindow(_ window: NSWindow) {
+        pruneRegistrations()
+
+        if let primaryWindow, primaryWindow !== window {
+            focus(primaryWindow)
+            closeDuplicate(window)
+            return
+        }
+
+        primaryWindow = window
+    }
+
+    func register(browser: BrowserState, window: NSWindow, existingID: UUID?) -> UUID? {
         pruneRegistrations()
 
         if let existingID,
@@ -32,12 +45,28 @@ final class BrowserExternalURLRouter: ObservableObject {
             registration.browser = browser
             registration.window = window
             registration.updatedAt = Date()
+            primaryWindow = window
             drainPendingURLs(to: registration)
             return existingID
         }
 
+        if let existingRegistration = preferredRegistration,
+           existingRegistration.window !== window {
+            drainPendingURLs(to: existingRegistration)
+            focus(existingRegistration.window)
+            closeDuplicate(window)
+            return nil
+        }
+
+        if let primaryWindow, primaryWindow !== window {
+            focus(primaryWindow)
+            closeDuplicate(window)
+            return nil
+        }
+
         let registration = Registration(id: existingID ?? UUID(), browser: browser, window: window)
         registrations.append(registration)
+        primaryWindow = window
         drainPendingURLs(to: registration)
         return registration.id
     }
@@ -69,11 +98,15 @@ final class BrowserExternalURLRouter: ObservableObject {
         pruneRegistrations()
 
         guard let window = preferredRegistration?.window else {
-            return false
+            guard let primaryWindow else {
+                return false
+            }
+
+            focus(primaryWindow)
+            return true
         }
 
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        focus(window)
         return true
     }
 
@@ -94,8 +127,7 @@ final class BrowserExternalURLRouter: ObservableObject {
         registration.updatedAt = Date()
 
         if let window = registration.window {
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
+            focus(window)
         }
     }
 
@@ -111,5 +143,23 @@ final class BrowserExternalURLRouter: ObservableObject {
 
     private func pruneRegistrations() {
         registrations.removeAll { $0.browser == nil || $0.window == nil }
+        if primaryWindow == nil {
+            primaryWindow = preferredRegistration?.window
+        }
+    }
+
+    private func focus(_ window: NSWindow?) {
+        guard let window else {
+            return
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func closeDuplicate(_ window: NSWindow) {
+        DispatchQueue.main.async { [weak window] in
+            window?.close()
+        }
     }
 }

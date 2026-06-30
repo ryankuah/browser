@@ -224,6 +224,11 @@ struct BrowserApp: App {
                     session: session
                 )
             }
+            .background(
+                WindowAccessor { window in
+                    externalURLRouter.registerApplicationWindow(window)
+                }
+            )
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -237,7 +242,7 @@ private struct BrowserCommands: Commands {
     let updateController: BrowserUpdateController
 
     var body: some Commands {
-        CommandGroup(after: .newItem) {
+        CommandGroup(replacing: .newItem) {
             Button("New Tab") {
                 browserCommandActions?.newTab()
             }
