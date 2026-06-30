@@ -121,20 +121,37 @@ struct BrowserMailPage: View {
             Text("No Imported Mail")
                 .font(.system(size: 15, weight: .semibold))
 
-            Text("Connect Google to import Gmail messages and attachments into Convex. Google remains read-only.")
+            Text(emptyStateMessage)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
 
-            Button {
-                session.openGoogleConnectionURL()
-            } label: {
-                Label("Connect Google", systemImage: "link")
+            if session.hasConnectedGoogleAccount {
+                Button {
+                    session.refreshCloudData()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button {
+                    session.openGoogleConnectionURL()
+                } label: {
+                    Label("Connect Google", systemImage: "link")
+                }
+                .buttonStyle(.borderedProminent)
             }
-            .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyStateMessage: String {
+        if let account = session.googleAccounts.first {
+            return "Google is connected as \(account.email). Mail may still be importing, or Gmail returned no recent messages."
+        }
+
+        return "Connect Google to import Gmail messages and attachments into Convex. Google remains read-only."
     }
 
     private var mailContent: some View {

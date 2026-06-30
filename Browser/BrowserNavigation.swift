@@ -3,6 +3,7 @@ import Foundation
 enum BrowserNavigation {
     private static let allowedURLSchemes: Set<String> = ["http", "https"]
     private static let allowedDownloadURLSchemes: Set<String> = ["http", "https", "blob", "data"]
+    private static let googleOAuthHosts: Set<String> = ["accounts.google.com", "neat-mongoose-389.convex.site"]
     static let browserCallbackScheme = "com.ryankuah.browser"
 
     static func url(from address: String, searchEngine: BrowserSearchEngine) -> URL? {
@@ -48,6 +49,30 @@ enum BrowserNavigation {
 
     static func isBrowserCallbackURL(_ url: URL) -> Bool {
         url.scheme?.lowercased() == browserCallbackScheme
+    }
+
+    static func isTransientOAuthURL(_ url: URL) -> Bool {
+        if isBrowserCallbackURL(url) {
+            return true
+        }
+
+        guard let host = url.host()?.lowercased() else {
+            return false
+        }
+
+        if host == "accounts.google.com", url.path.contains("/o/oauth") {
+            return true
+        }
+
+        return isGoogleOAuthCallbackURL(url)
+    }
+
+    static func isGoogleOAuthCallbackURL(_ url: URL) -> Bool {
+        guard let host = url.host()?.lowercased() else {
+            return false
+        }
+
+        return googleOAuthHosts.contains(host) && url.path == "/api/google/oauth/callback"
     }
 
     static func isAllowedDownloadURL(_ url: URL) -> Bool {

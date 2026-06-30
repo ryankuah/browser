@@ -453,6 +453,26 @@ struct BrowserWindowView: View {
                     .zIndex(7)
                 }
 
+                if let oauthURL = session.oauthPresentationURL {
+                    BrowserOAuthOverlayView(
+                        url: oauthURL,
+                        onCallback: { callbackURL in
+                            session.handleGoogleOAuthCallback(callbackURL)
+                        },
+                        onCancel: {
+                            session.dismissOAuthPresentation()
+                        },
+                        onOpenExternally: { externalURL in
+                            session.dismissOAuthPresentation()
+                            BrowserExternalURLRouter.shared.openExternalURL(externalURL)
+                        }
+                    )
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .webViewOcclusionRegion()
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    .zIndex(9)
+                }
+
                 BrowserToastStack(browser: browser)
                     .frame(width: min(max(proxy.size.width - 32, 0), 320), alignment: .topTrailing)
                     .offset(
@@ -490,6 +510,7 @@ struct BrowserWindowView: View {
             .animation(.easeInOut(duration: 0.16), value: isHistoryPresented)
             .animation(.easeInOut(duration: 0.16), value: isMailPresented)
             .animation(.easeInOut(duration: 0.16), value: isCalendarPresented)
+            .animation(.easeInOut(duration: 0.16), value: session.oauthPresentationURL)
             .animation(.easeInOut(duration: 0.16), value: isConsolePresented)
             .animation(.easeInOut(duration: 0.16), value: isProfileMenuVisible)
             .animation(.easeInOut(duration: 0.16), value: browser.bezelStyle)

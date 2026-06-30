@@ -100,6 +100,18 @@ struct BrowserGoogleCalendar: Identifiable, Decodable, Equatable {
     }
 }
 
+struct BrowserGoogleAccount: Identifiable, Decodable, Equatable {
+    let id: String
+    let email: String
+    let displayName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case email
+        case displayName
+    }
+}
+
 struct BrowserCalendarEvent: Identifiable, Decodable, Equatable {
     let id: String
     let providerCalendarId: String
@@ -130,9 +142,11 @@ struct BrowserCalendarEvent: Identifiable, Decodable, Equatable {
 final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizing {
     @Published private(set) var authPhase: BrowserAuthPhase
     @Published private(set) var mailMessages: [BrowserMailMessage] = []
+    @Published private(set) var googleAccounts: [BrowserGoogleAccount] = []
     @Published private(set) var calendars: [BrowserGoogleCalendar] = []
     @Published private(set) var calendarEvents: [BrowserCalendarEvent] = []
     @Published private(set) var googleConnectURL: URL?
+    @Published private(set) var oauthPresentationURL: URL?
     @Published private(set) var username: String?
 
     private let deploymentURL: String
@@ -144,6 +158,10 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
 
     var isSignedIn: Bool {
         authPhase == .signedIn
+    }
+
+    var hasConnectedGoogleAccount: Bool {
+        !googleAccounts.isEmpty
     }
 
     init(deploymentURL: String = BrowserCloudConfiguration.convexDeploymentURL) {
@@ -250,9 +268,11 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             sessionToken = nil
             username = nil
             mailMessages = []
+            googleAccounts = []
             calendars = []
             calendarEvents = []
             googleConnectURL = nil
+            oauthPresentationURL = nil
             authPhase = .signedOut
         }
     }
@@ -287,6 +307,24 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
         }
 
         cancellables.removeAll()
+        client.subscribe(
+            to: "google:connectedAccounts",
+            with: ["sessionToken": sessionToken],
+            yielding: [BrowserGoogleAccount].self
+        )
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { completion in
+                    if case .failure(let error) = completion {
+                        NSLog("Convex Google account subscription failed: \(error)")
+                    }
+                },
+                receiveValue: { [weak self] accounts in
+                    self?.googleAccounts = accounts
+                }
+            )
+            .store(in: &cancellables)
+
         client.subscribe(
             to: "mail:messages",
             with: ["sessionToken": sessionToken, "limit": 100],
@@ -361,15 +399,30 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
     }
 
     func openGoogleConnectionURL() {
-        if googleConnectURL == nil {
-            prepareGoogleConnection()
-        }
-
-        guard let googleConnectURL else {
+        guard let client, let sessionToken, isSignedIn else {
             return
         }
 
-        BrowserExternalURLRouter.shared.openExternalURL(googleConnectURL)
+        Task {
+            do {
+                let response: GoogleOAuthStartResponse = try await client.mutation(
+                    "google:startOAuth",
+                    with: ["sessionToken": sessionToken]
+                )
+                guard let url = URL(string: response.authorizationUrl) else {
+                    authPhase = .failed("Google OAuth returned an invalid authorization URL.")
+                    return
+                }
+                googleConnectURL = url
+                oauthPresentationURL = url
+            } catch {
+                authPhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func dismissOAuthPresentation() {
+        oauthPresentationURL = nil
     }
 
     func handleGoogleOAuthCallback(_ url: URL) {
@@ -380,10 +433,15 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
         }
 
         googleConnectURL = nil
+        oauthPresentationURL = nil
 
         let status = components.queryItems?.first { $0.name == "status" }?.value
         if status == "error" {
             let message = components.queryItems?.first { $0.name == "message" }?.value
+            if message?.localizedCaseInsensitiveContains("expired") == true, !isSignedIn {
+                authPhase = .signedOut
+                return
+            }
             authPhase = .failed(message ?? "Google OAuth failed.")
             return
         }

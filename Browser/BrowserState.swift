@@ -1425,6 +1425,13 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
         let restoredTabs = session.tabs
             .sorted { $0.position < $1.position }
+            .filter { storedTab in
+                guard let url = storedTab.url else {
+                    return true
+                }
+
+                return !BrowserNavigation.isTransientOAuthURL(url)
+            }
             .map { storedTab in
                 let tab = makeTab(id: storedTab.id, title: storedTab.title, url: storedTab.url)
                 historyCursorByTabID[tab.id] = BrowserHistoryCursor(journeyID: UUID())
@@ -1436,6 +1443,9 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
 
         tabs = restoredTabs
         selectedTabID = restoredTabs.contains { $0.id == session.selectedTabID } ? session.selectedTabID : restoredTabs.first?.id
+        if tabs.isEmpty {
+            _ = createTab(url: nil, persist: false)
+        }
     }
 
     private func resetProfileScopedState() {
@@ -2009,6 +2019,10 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     private func tabURLDidChange(_ tab: BrowserTab, url: URL) {
+        guard !BrowserNavigation.isTransientOAuthURL(url) else {
+            return
+        }
+
         persistSession()
 
         let urlString = url.absoluteString
@@ -2033,6 +2047,10 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
         url: URL,
         title: String
     ) {
+        guard !BrowserNavigation.isTransientOAuthURL(url) else {
+            return
+        }
+
         let previousTask = historyRecordTasksByTabID[tabID]
         let task = Task { [weak self, persistence] in
             await previousTask?.value
@@ -2204,7 +2222,13 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     private func sessionSnapshot() -> (tabs: [BrowserTabSnapshot], selectedTabID: UUID?) {
-        let sessionTabs = tabs
+        let sessionTabs = tabs.filter { tab in
+            guard let url = tab.url else {
+                return true
+            }
+
+            return !BrowserNavigation.isTransientOAuthURL(url)
+        }
         let persistedSelectedTabID = sessionTabs.contains { $0.id == selectedTabID } ? selectedTabID : sessionTabs.first?.id
         let snapshots = sessionTabs.enumerated().map { index, tab in
             BrowserTabSnapshot(

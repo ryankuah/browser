@@ -71,13 +71,20 @@ struct BrowserCalendarPage: View {
 
             Spacer()
 
-            Button {
-                session.openGoogleConnectionURL()
-            } label: {
-                Label("Connect Google", systemImage: "link")
-                    .font(.system(size: 12, weight: .semibold))
+            if session.hasConnectedGoogleAccount {
+                Text(session.googleAccounts.first?.email ?? "Google connected")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else {
+                Button {
+                    session.openGoogleConnectionURL()
+                } label: {
+                    Label("Connect Google", systemImage: "link")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
 
             Button {
                 session.refreshCloudData()
@@ -102,20 +109,37 @@ struct BrowserCalendarPage: View {
             Text("No Imported Events")
                 .font(.system(size: 15, weight: .semibold))
 
-            Text("Connect Google to import Calendar data into Convex. Browser never writes events back to Google.")
+            Text(emptyStateMessage)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
 
-            Button {
-                session.openGoogleConnectionURL()
-            } label: {
-                Label("Connect Google", systemImage: "link")
+            if session.hasConnectedGoogleAccount {
+                Button {
+                    session.refreshCloudData()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button {
+                    session.openGoogleConnectionURL()
+                } label: {
+                    Label("Connect Google", systemImage: "link")
+                }
+                .buttonStyle(.borderedProminent)
             }
-            .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyStateMessage: String {
+        if let account = session.googleAccounts.first {
+            return "Google is connected as \(account.email). Calendar data may still be importing, or no readable events were returned."
+        }
+
+        return "Connect Google to import Calendar data into Convex. Browser never writes events back to Google."
     }
 
     private var calendarContent: some View {

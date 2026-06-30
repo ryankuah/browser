@@ -44,6 +44,7 @@
 		2BC100052D1A000100000001 /* BrowserCalendarPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100042D1A000100000001 /* BrowserCalendarPage.swift */; };
 		2BC1000B2D1A000100000001 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 2BC1000A2D1A000100000001 /* ConvexMobile */; };
 		2BC1000D2D1B000100000001 /* BrowserExternalURLRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC1000C2D1B000100000001 /* BrowserExternalURLRouter.swift */; };
+		2BC1000F2D1C000100000001 /* BrowserOAuthOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC1000E2D1C000100000001 /* BrowserOAuthOverlayView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -84,6 +85,7 @@
 		2BC100022D1A000100000001 /* BrowserMailPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserMailPage.swift; sourceTree = "<group>"; };
 		2BC100042D1A000100000001 /* BrowserCalendarPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCalendarPage.swift; sourceTree = "<group>"; };
 		2BC1000C2D1B000100000001 /* BrowserExternalURLRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserExternalURLRouter.swift; sourceTree = "<group>"; };
+		2BC1000E2D1C000100000001 /* BrowserOAuthOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserOAuthOverlayView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -163,6 +165,7 @@
 				2BC100042D1A000100000001 /* BrowserCalendarPage.swift */,
 				2B88DDC15985F48350CBAC13 /* BrowserHistoryPage.swift */,
 				2BC100022D1A000100000001 /* BrowserMailPage.swift */,
+				2BC1000E2D1C000100000001 /* BrowserOAuthOverlayView.swift */,
 				2B0151F54462035696689556 /* BrowserProfileViews.swift */,
 				2B53DCE0285482951017ECF8 /* BrowserToasts.swift */,
 				2B80BA7A6CEBF38327BFC67D /* BrowserWindowOcclusion.swift */,
@@ -282,6 +285,7 @@
 					2BC100052D1A000100000001 /* BrowserCalendarPage.swift in Sources */,
 					2B9D420FE812E97BC7D17F14 /* BrowserHistoryPage.swift in Sources */,
 					2BC100032D1A000100000001 /* BrowserMailPage.swift in Sources */,
+					2BC1000F2D1C000100000001 /* BrowserOAuthOverlayView.swift in Sources */,
 					2BEEF46EC68BAB28E2046202 /* BrowserProfileViews.swift in Sources */,
 					2B69F0B907CDDCAFBD14A503 /* BrowserToasts.swift in Sources */,
 					2BB13BB91B85465D924F9C18 /* BrowserWindowOcclusion.swift in Sources */,
