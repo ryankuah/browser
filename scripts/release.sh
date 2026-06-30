@@ -31,6 +31,9 @@ Examples:
 Useful environment variables:
   DEVELOPER_ID_APPLICATION  Explicit Developer ID Application identity.
   NOTARYTOOL_PROFILE        notarytool keychain profile. Defaults to browser-notary.
+  RELEASE_CONVEX_URL        Convex URL embedded in release builds.
+                            Defaults to the production Browser deployment.
+  BROWSER_CONVEX_URL        Overrides RELEASE_CONVEX_URL for packaging.
   NOTARIZE=0                Build a local test package without notarization.
   DRY_RUN=1                 Show the computed release values without changing files.
   SKIP_PUSH=1               Do not push the commit or tag.

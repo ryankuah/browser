@@ -8,6 +8,7 @@ extension ConvexClient: @unchecked Sendable {}
 
 enum BrowserAuthPhase: Equatable {
     case unavailable(String)
+    case checking
     case signedOut
     case signingIn
     case signedIn
@@ -176,6 +177,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
     private let tokenStore = BrowserSessionTokenStore()
     private var cancellables: Set<AnyCancellable> = []
     private var hasMigratedLocalState = false
+    private var hasAttemptedCachedLogin = false
     private var sessionToken: String?
 
     var isSignedIn: Bool {
@@ -195,10 +197,15 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
         }
 
         client = ConvexClient(deploymentUrl: deploymentURL)
-        authPhase = .signedOut
+        authPhase = .checking
     }
 
     func loginFromCache() {
+        guard !hasAttemptedCachedLogin else {
+            return
+        }
+        hasAttemptedCachedLogin = true
+
         guard let client else {
             return
         }
@@ -235,6 +242,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             return
         }
 
+        hasAttemptedCachedLogin = true
         authPhase = .signingIn
         Task {
             do {
@@ -258,6 +266,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             return
         }
 
+        hasAttemptedCachedLogin = true
         authPhase = .signingIn
         Task {
             do {
@@ -288,6 +297,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             }
             tokenStore.clear()
             sessionToken = nil
+            hasAttemptedCachedLogin = true
             username = nil
             mailMessages = []
             mailBackfillStates = []
@@ -711,14 +721,36 @@ struct BrowserAuthGate<Content: View>: View {
     let content: () -> Content
 
     var body: some View {
-        switch session.authPhase {
-        case .signedIn:
-            content()
-        case .unavailable(let message):
-            BrowserAuthUnavailableView(message: message)
-        default:
-            BrowserAuthView(session: session)
+        Group {
+            switch session.authPhase {
+            case .signedIn:
+                content()
+            case .unavailable(let message):
+                BrowserAuthUnavailableView(message: message)
+            case .checking:
+                BrowserAuthCheckingView()
+            default:
+                BrowserAuthView(session: session)
+            }
         }
+        .onAppear {
+            session.loginFromCache()
+        }
+    }
+}
+
+private struct BrowserAuthCheckingView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.small)
+
+            Text("Signing in")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -798,9 +830,6 @@ private struct BrowserAuthView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear {
-            session.loginFromCache()
-        }
     }
 
     private var buttonTitle: String {

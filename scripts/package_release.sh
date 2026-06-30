@@ -16,6 +16,8 @@ NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-browser-notary}"
 NOTARIZE="${NOTARIZE:-1}"
 DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-}"
 BROWSER_CONVEX_URL="${BROWSER_CONVEX_URL:-}"
+RELEASE_CONVEX_URL="${RELEASE_CONVEX_URL:-https://neat-mongoose-389.convex.cloud}"
+BROWSER_CONVEX_URL_SOURCE=""
 ATTACHED_DMG_DEVICE=""
 
 cleanup() {
@@ -151,14 +153,32 @@ read_env_file_value() {
 resolve_browser_convex_url() {
   local value="$BROWSER_CONVEX_URL"
 
+  if [[ -n "$value" ]]; then
+    BROWSER_CONVEX_URL_SOURCE="BROWSER_CONVEX_URL"
+  fi
   if [[ -z "$value" ]]; then
     value="$(read_env_file_value BROWSER_CONVEX_URL || true)"
+    if [[ -n "$value" ]]; then
+      BROWSER_CONVEX_URL_SOURCE=".env.local BROWSER_CONVEX_URL"
+    fi
+  fi
+  if [[ -z "$value" ]]; then
+    value="$RELEASE_CONVEX_URL"
+    if [[ -n "$value" ]]; then
+      BROWSER_CONVEX_URL_SOURCE="RELEASE_CONVEX_URL"
+    fi
   fi
   if [[ -z "$value" ]]; then
     value="${CONVEX_URL:-}"
+    if [[ -n "$value" ]]; then
+      BROWSER_CONVEX_URL_SOURCE="CONVEX_URL"
+    fi
   fi
   if [[ -z "$value" ]]; then
     value="$(read_env_file_value CONVEX_URL || true)"
+    if [[ -n "$value" ]]; then
+      BROWSER_CONVEX_URL_SOURCE=".env.local CONVEX_URL"
+    fi
   fi
 
   if [[ -z "$value" ]]; then
@@ -170,6 +190,24 @@ Set BROWSER_CONVEX_URL or CONVEX_URL in your shell, or add one of them to
   scripts/package_release.sh
 EOF
     exit 1
+  fi
+
+  if [[ "$BROWSER_CONVEX_URL_SOURCE" == *"CONVEX_URL"* ]]; then
+    local deployment
+    deployment="${CONVEX_DEPLOYMENT:-}"
+    if [[ -z "$deployment" ]]; then
+      deployment="$(read_env_file_value CONVEX_DEPLOYMENT || true)"
+    fi
+    if [[ "$deployment" == dev:* ]]; then
+      cat >&2 <<'EOF'
+Refusing to embed dev CONVEX_URL into a release build.
+
+Set BROWSER_CONVEX_URL to the production Convex deployment URL in your shell
+or .env.local, then rerun:
+  scripts/package_release.sh
+EOF
+      exit 1
+    fi
   fi
 
   printf '%s\n' "$value"
@@ -199,19 +237,11 @@ import sys
 import zlib
 
 output_path = sys.argv[1]
-width, height = 660, 400
+width, height = 660, 300
 pixels = bytearray()
 
 def blend(dst, src, alpha):
     return tuple(round(dst[i] * (1 - alpha) + src[i] * alpha) for i in range(3))
-
-def rounded_rect_alpha(x, y, left, top, right, bottom, radius):
-    if x < left or x >= right or y < top or y >= bottom:
-        return 0
-    cx = min(max(x, left + radius), right - radius - 1)
-    cy = min(max(y, top + radius), bottom - radius - 1)
-    distance = math.hypot(x - cx, y - cy)
-    return max(0, min(1, radius + 0.5 - distance))
 
 def circle_alpha(x, y, cx, cy, radius):
     distance = math.hypot(x - cx, y - cy)
@@ -229,24 +259,20 @@ def segment_alpha(x, y, x1, y1, x2, y2, radius):
 
 for y in range(height):
     for x in range(width):
-        base = (244, 248, 251)
-        shade = int(10 * y / height)
+        base = (250, 252, 254)
+        shade = int(8 * y / height)
         color = (max(0, base[0] - shade), max(0, base[1] - shade), max(0, base[2] - shade))
 
-        panel = rounded_rect_alpha(x, y, 28, 28, 632, 372, 28)
-        if panel:
-            color = blend(color, (255, 255, 255), 0.72 * panel)
-
-        for cx, cy in ((190, 252), (470, 252)):
-            glow = circle_alpha(x, y, cx, cy, 116)
+        for cx, cy in ((190, 210), (470, 210)):
+            glow = circle_alpha(x, y, cx, cy, 96)
             if glow:
                 color = blend(color, (226, 235, 247), 0.22 * glow)
 
-        divider = segment_alpha(x, y, 72, 120, 588, 120, 0.8)
+        divider = segment_alpha(x, y, 72, 74, 588, 74, 0.8)
         if divider:
             color = blend(color, (190, 198, 207), 0.38 * divider)
 
-        for line in ((274, 252, 386, 252), (366, 234, 386, 252), (366, 270, 386, 252)):
+        for line in ((274, 210, 386, 210), (366, 192, 386, 210), (366, 228, 386, 210)):
             arrow = segment_alpha(x, y, *line, 2.4)
             if arrow:
                 color = blend(color, (92, 105, 122), 0.66 * arrow)
@@ -297,8 +323,8 @@ tell application "Finder"
   set icon size of theViewOptions to 112
   set text size of theViewOptions to 12
   set background picture of theViewOptions to backgroundImage
-  set position of item "Browser.app" of targetWindow to {190, 252}
-  set position of item "Applications" of targetWindow to {470, 252}
+  set position of item "Browser.app" of targetWindow to {190, 210}
+  set position of item "Applications" of targetWindow to {470, 210}
   update targetFolder
   delay 2
   close targetWindow
