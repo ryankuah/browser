@@ -2164,9 +2164,7 @@ final class BrowserState: NSObject, ObservableObject, WKUIDelegate, WKDownloadDe
     }
 
     private func refreshElementFullscreenState() {
-        isElementFullscreenActive = tabs.contains { tab in
-            tab.webView.isElementFullscreenTransitionActive
-        }
+        isElementFullscreenActive = false
     }
 
     private func persistSession() {
