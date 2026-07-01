@@ -43,6 +43,8 @@
 		2BC100012D1A000100000001 /* BrowserCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100002D1A000100000001 /* BrowserCloud.swift */; };
 		2BC100032D1A000100000001 /* BrowserMailPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100022D1A000100000001 /* BrowserMailPage.swift */; };
 		2BC100052D1A000100000001 /* BrowserCalendarPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100042D1A000100000001 /* BrowserCalendarPage.swift */; };
+		2BC100112D1E000100000001 /* BrowserDashboardLegacyPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100122D1E000100000001 /* BrowserDashboardLegacyPage.swift */; };
+		2BC100132D1E000200000001 /* BrowserDashboardPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC100142D1E000200000001 /* BrowserDashboardPage.swift */; };
 		2BC1000B2D1A000100000001 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 2BC1000A2D1A000100000001 /* ConvexMobile */; };
 		2BC1000D2D1B000100000001 /* BrowserExternalURLRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC1000C2D1B000100000001 /* BrowserExternalURLRouter.swift */; };
 		2BC1000F2D1C000100000001 /* BrowserOAuthOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC1000E2D1C000100000001 /* BrowserOAuthOverlayView.swift */; };
@@ -86,6 +88,8 @@
 		2BC100002D1A000100000001 /* BrowserCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCloud.swift; sourceTree = "<group>"; };
 		2BC100022D1A000100000001 /* BrowserMailPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserMailPage.swift; sourceTree = "<group>"; };
 		2BC100042D1A000100000001 /* BrowserCalendarPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCalendarPage.swift; sourceTree = "<group>"; };
+		2BC100122D1E000100000001 /* BrowserDashboardLegacyPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserDashboardLegacyPage.swift; sourceTree = "<group>"; };
+		2BC100142D1E000200000001 /* BrowserDashboardPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserDashboardPage.swift; sourceTree = "<group>"; };
 		2BC1000C2D1B000100000001 /* BrowserExternalURLRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserExternalURLRouter.swift; sourceTree = "<group>"; };
 		2BC1000E2D1C000100000001 /* BrowserOAuthOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserOAuthOverlayView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -166,6 +170,8 @@
 				2B103A9C3F4A9FEF84D94F22 /* BrowserFindPanel.swift */,
 				2B20600C79A775026EFE02AE /* BrowserFullSettingsPage.swift */,
 				2BC100042D1A000100000001 /* BrowserCalendarPage.swift */,
+				2BC100122D1E000100000001 /* BrowserDashboardLegacyPage.swift */,
+				2BC100142D1E000200000001 /* BrowserDashboardPage.swift */,
 				2B88DDC15985F48350CBAC13 /* BrowserHistoryPage.swift */,
 				2BC100022D1A000100000001 /* BrowserMailPage.swift */,
 				2BC1000E2D1C000100000001 /* BrowserOAuthOverlayView.swift */,
@@ -287,6 +293,8 @@
 					2B02A59760D828646C7AC6C3 /* BrowserFindPanel.swift in Sources */,
 					2BA155E22421955C0E3D7A81 /* BrowserFullSettingsPage.swift in Sources */,
 					2BC100052D1A000100000001 /* BrowserCalendarPage.swift in Sources */,
+					2BC100112D1E000100000001 /* BrowserDashboardLegacyPage.swift in Sources */,
+					2BC100132D1E000200000001 /* BrowserDashboardPage.swift in Sources */,
 					2B9D420FE812E97BC7D17F14 /* BrowserHistoryPage.swift in Sources */,
 					2BC100032D1A000100000001 /* BrowserMailPage.swift in Sources */,
 					2BC1000F2D1C000100000001 /* BrowserOAuthOverlayView.swift in Sources */,

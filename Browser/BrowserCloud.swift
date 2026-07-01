@@ -116,6 +116,342 @@ struct BrowserMailMessageBody: Identifiable, Decodable, Equatable {
     }
 }
 
+struct BrowserMailDashboardMessage: Identifiable, Decodable, Equatable {
+    let id: String
+    let googleAccountId: String
+    let providerMessageId: String
+    let providerThreadId: String
+    let from: String?
+    let subject: String?
+    let snippet: String?
+    let internalDate: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case googleAccountId
+        case providerMessageId
+        case providerThreadId
+        case from
+        case subject
+        case snippet
+        case internalDate
+    }
+
+    var displayDate: Date? {
+        internalDate.map { Date(timeIntervalSince1970: $0 / 1000) }
+    }
+}
+
+struct BrowserMailClassificationSummary: Identifiable, Decodable, Equatable {
+    let id: String
+    let category: String
+    let confidence: Double
+    let reason: String?
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case category
+        case confidence
+        case reason
+        case updatedAt
+        case message
+    }
+}
+
+struct BrowserMailSecurityCode: Identifiable, Decodable, Equatable {
+    let id: String
+    let serviceName: String?
+    let code: String
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case serviceName
+        case code
+        case updatedAt
+        case message
+    }
+}
+
+struct BrowserMailSecurityNotification: Identifiable, Decodable, Equatable {
+    let id: String
+    let notificationType: String
+    let serviceName: String?
+    let accountEmail: String?
+    let url: String?
+    let ipAddress: String?
+    let location: String?
+    let device: String?
+    let app: String?
+    let occurredAt: Double?
+    let status: String
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+    let messages: [BrowserMailDashboardMessage]?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case notificationType
+        case serviceName
+        case accountEmail
+        case url
+        case ipAddress
+        case location
+        case device
+        case app
+        case occurredAt
+        case status
+        case updatedAt
+        case message
+        case messages
+    }
+}
+
+struct BrowserMailNotification: Identifiable, Decodable, Equatable {
+    let id: String
+    let notificationType: String
+    let serviceName: String?
+    let title: String?
+    let status: String
+    let url: String?
+    let occurredAt: Double?
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case notificationType
+        case serviceName
+        case title
+        case status
+        case url
+        case occurredAt
+        case updatedAt
+        case message
+    }
+}
+
+struct BrowserMailSupportThreadSummary: Identifiable, Decodable, Equatable {
+    let id: String
+    let companyName: String
+    let ticketId: String?
+    let subject: String?
+    let status: String
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+    let messages: [BrowserMailDashboardMessage]?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case companyName
+        case ticketId
+        case subject
+        case status
+        case updatedAt
+        case message
+        case messages
+    }
+}
+
+struct BrowserMailOrderSummary: Identifiable, Decodable, Equatable {
+    let id: String
+    let merchant: String
+    let orderNumber: String?
+    let itemSummary: String?
+    let imageUrl: String?
+    let status: String
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+    let messages: [BrowserMailDashboardMessage]
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case merchant
+        case orderNumber
+        case itemSummary
+        case imageUrl
+        case status
+        case updatedAt
+        case message
+        case messages
+    }
+}
+
+struct BrowserMailShipmentSummary: Identifiable, Decodable, Equatable {
+    let id: String
+    let merchant: String?
+    let carrier: String?
+    let trackingNumber: String?
+    let trackingUrl: String?
+    let itemSummary: String?
+    let imageUrl: String?
+    let orderNumber: String?
+    let status: String
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+    let messages: [BrowserMailDashboardMessage]?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case merchant
+        case carrier
+        case trackingNumber
+        case trackingUrl
+        case itemSummary
+        case imageUrl
+        case orderNumber
+        case status
+        case updatedAt
+        case message
+        case messages
+    }
+}
+
+struct BrowserMailSubscriptionSummary: Identifiable, Decodable, Equatable {
+    let id: String
+    let provider: String
+    let itemSummary: String
+    let imageUrl: String?
+    let amount: Double?
+    let currency: String?
+    let nextPaymentDueAt: Double?
+    let status: String
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+    let messages: [BrowserMailDashboardMessage]
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case provider
+        case itemSummary
+        case imageUrl
+        case amount
+        case currency
+        case nextPaymentDueAt
+        case status
+        case updatedAt
+        case message
+        case messages
+    }
+}
+
+struct BrowserMailInvoiceSummary: Identifiable, Decodable, Equatable {
+    let id: String
+    let vendor: String?
+    let invoiceNumber: String?
+    let amount: Double?
+    let currency: String?
+    let status: String
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+    let messages: [BrowserMailDashboardMessage]?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case vendor
+        case invoiceNumber
+        case amount
+        case currency
+        case status
+        case updatedAt
+        case message
+        case messages
+    }
+}
+
+struct BrowserMailBookingSummary: Identifiable, Decodable, Equatable {
+    let id: String
+    let category: String
+    let provider: String?
+    let confirmationNumber: String?
+    let bookingCode: String?
+    let bookingUrl: String?
+    let qrCodeUrl: String?
+    let ticketUrl: String?
+    let amount: Double?
+    let currency: String?
+    let title: String?
+    let location: String?
+    let startTime: Double?
+    let endTime: Double?
+    let status: String?
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+    let messages: [BrowserMailDashboardMessage]?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case category
+        case provider
+        case confirmationNumber
+        case bookingCode
+        case bookingUrl
+        case qrCodeUrl
+        case ticketUrl
+        case amount
+        case currency
+        case title
+        case location
+        case startTime
+        case endTime
+        case status
+        case updatedAt
+        case message
+        case messages
+    }
+}
+
+struct BrowserMailMeetingEventSummary: Identifiable, Decodable, Equatable {
+    let id: String
+    let source: String
+    let provider: String?
+    let eventKey: String
+    let title: String?
+    let location: String?
+    let url: String?
+    let startTime: Double?
+    let endTime: Double?
+    let status: String
+    let updatedAt: Double
+    let message: BrowserMailDashboardMessage?
+    let messages: [BrowserMailDashboardMessage]?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case source
+        case provider
+        case eventKey
+        case title
+        case location
+        case url
+        case startTime
+        case endTime
+        case status
+        case updatedAt
+        case message
+        case messages
+    }
+}
+
+struct BrowserMailDashboard: Decodable, Equatable {
+    let categoryCounts: [String: Int]
+    let securityCodes: [BrowserMailSecurityCode]
+    let securityNotifications: [BrowserMailSecurityNotification]
+    let notifications: [BrowserMailNotification]
+    let supportThreads: [BrowserMailSupportThreadSummary]
+    let orders: [BrowserMailOrderSummary]
+    let shipments: [BrowserMailShipmentSummary]
+    let subscriptions: [BrowserMailSubscriptionSummary]
+    let invoices: [BrowserMailInvoiceSummary]
+    let bookings: [BrowserMailBookingSummary]
+    let meetingsEvents: [BrowserMailMeetingEventSummary]
+    let promotions: [BrowserMailClassificationSummary]
+    let spam: [BrowserMailClassificationSummary]
+}
+
 struct BrowserMailThread: Identifiable, Equatable {
     let id: String
     /// Messages within the thread, oldest first.
@@ -210,7 +546,7 @@ struct BrowserCalendarEvent: Identifiable, Decodable, Equatable {
     }
 
     var startDate: Date? {
-        startTimestamp.map(Date.init(timeIntervalSince1970:))
+        startTimestamp.map { Date(timeIntervalSince1970: $0 / 1000) }
     }
 }
 
@@ -219,6 +555,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
     @Published private(set) var authPhase: BrowserAuthPhase
     @Published private(set) var mailMessages: [BrowserMailMessage] = []
     @Published private(set) var mailMessageBodies: [String: BrowserMailMessageBody] = [:]
+    @Published private(set) var mailDashboard: BrowserMailDashboard?
     @Published private(set) var hasMoreMailMessages = true
     @Published private(set) var isLoadingMoreMailMessages = false
     @Published private(set) var mailBackfillStates: [BrowserMailBackfillState] = []
@@ -363,6 +700,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             username = nil
             mailMessages = []
             mailMessageBodies = [:]
+            mailDashboard = nil
             mailMessageBodyCancellables.removeAll()
             mailMessagesLimit = mailMessagePageSize
             hasMoreMailMessages = true
@@ -447,6 +785,24 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             .store(in: &cancellables)
 
         client.subscribe(
+            to: "mail:dashboard",
+            with: ["sessionToken": sessionToken],
+            yielding: BrowserMailDashboard.self
+        )
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { completion in
+                    if case .failure(let error) = completion {
+                        NSLog("Convex mail dashboard subscription failed: \(error)")
+                    }
+                },
+                receiveValue: { [weak self] dashboard in
+                    self?.mailDashboard = dashboard
+                }
+            )
+            .store(in: &cancellables)
+
+        client.subscribe(
             to: "calendar:calendars",
             with: ["sessionToken": sessionToken],
             yielding: [BrowserGoogleCalendar].self
@@ -526,6 +882,23 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
                     self?.mailMessageBodyCancellables[message.providerMessageId] = nil
                 }
             )
+    }
+
+    func analyzeRecentMail(limit: Double = 500) {
+        guard let client, let sessionToken, isSignedIn else {
+            return
+        }
+
+        Task {
+            do {
+                try await client.mutation(
+                    "mail:analyzeRecentMessages",
+                    with: ["sessionToken": sessionToken, "limit": limit]
+                )
+            } catch {
+                NSLog("Convex mail analysis scheduling failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func subscribeToMailMessages(limit: Double) {

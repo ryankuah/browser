@@ -345,11 +345,12 @@ export const upsertGmailMessage = internalMutation({
       importedAt: now,
       updatedAt: now,
     };
+    const gmailMessageId = existing?._id ?? (await ctx.db.insert("gmailMessages", row));
     if (existing) {
       await ctx.db.patch(existing._id, row);
-    } else {
-      await ctx.db.insert("gmailMessages", row);
     }
+
+    await ctx.scheduler.runAfter(0, internal.mailAnalysis.analyzeGmailMessage, { gmailMessageId });
   },
 });
 

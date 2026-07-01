@@ -107,6 +107,8 @@ private struct BrowserInternalPageView: View {
             BrowserHistoryPage(browser: browser, onClose: onClose)
         case .mail:
             BrowserMailPage(browser: browser, session: session, onClose: onClose)
+        case .dashboard:
+            BrowserDashboardPage(browser: browser, session: session, onClose: onClose)
         case .calendar:
             BrowserCalendarPage(browser: browser, session: session, onClose: onClose)
         }
