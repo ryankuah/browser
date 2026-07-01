@@ -1,7 +1,16 @@
 import { v } from "convex/values";
-import { ActionCtx, action, internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import {
+  ActionCtx,
+  MutationCtx,
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { Id } from "./_generated/dataModel";
+import { Doc, Id } from "./_generated/dataModel";
 import { getCurrentUser } from "./users";
 
 const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
@@ -349,10 +358,54 @@ export const upsertGmailMessage = internalMutation({
     if (existing) {
       await ctx.db.patch(existing._id, row);
     }
+    await upsertGmailMessageSummary(ctx, gmailMessageId, {
+      ...row,
+      _id: gmailMessageId,
+    });
 
     await ctx.scheduler.runAfter(0, internal.mailAnalysis.analyzeGmailMessage, { gmailMessageId });
   },
 });
+
+async function upsertGmailMessageSummary(
+  ctx: MutationCtx,
+  gmailMessageId: Id<"gmailMessages">,
+  message: Pick<
+    Doc<"gmailMessages">,
+    | "_id"
+    | "userId"
+    | "googleAccountId"
+    | "providerMessageId"
+    | "providerThreadId"
+    | "from"
+    | "subject"
+    | "snippet"
+    | "internalDate"
+    | "updatedAt"
+  >,
+) {
+  const [existing] = await ctx.db
+    .query("gmailMessageSummaries")
+    .withIndex("by_message", (q) => q.eq("gmailMessageId", gmailMessageId))
+    .take(1);
+  const row = {
+    userId: message.userId,
+    gmailMessageId,
+    googleAccountId: message.googleAccountId,
+    providerMessageId: message.providerMessageId,
+    providerThreadId: message.providerThreadId,
+    from: message.from,
+    subject: message.subject,
+    snippet: message.snippet,
+    internalDate: message.internalDate,
+    updatedAt: message.updatedAt,
+  };
+  if (existing) {
+    await ctx.db.patch(existing._id, row);
+  } else {
+    await ctx.db.insert("gmailMessageSummaries", row);
+  }
+}
 
 export const upsertGmailAttachment = internalMutation({
   args: {

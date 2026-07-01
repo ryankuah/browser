@@ -162,6 +162,22 @@ export default defineSchema({
     .index("by_user_recent", ["userId", "internalDate"])
     .index("by_internal_date", ["internalDate"]),
 
+  gmailMessageSummaries: defineTable({
+    userId: v.id("users"),
+    gmailMessageId: v.id("gmailMessages"),
+    googleAccountId: v.id("googleAccounts"),
+    providerMessageId: v.string(),
+    providerThreadId: v.string(),
+    from: v.optional(v.string()),
+    subject: v.optional(v.string()),
+    snippet: v.optional(v.string()),
+    internalDate: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_message", ["gmailMessageId"])
+    .index("by_account_message", ["googleAccountId", "providerMessageId"])
+    .index("by_user_recent", ["userId", "internalDate"]),
+
   gmailAttachments: defineTable({
     userId: v.id("users"),
     googleAccountId: v.id("googleAccounts"),

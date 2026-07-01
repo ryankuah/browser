@@ -452,6 +452,77 @@ struct BrowserMailDashboard: Decodable, Equatable {
     let spam: [BrowserMailClassificationSummary]
 }
 
+enum BrowserMailDashboardSection: String, CaseIterable, Hashable {
+    case shipments
+    case subscriptions
+    case orders
+    case securityCodes
+    case notifications
+    case supportThreads
+    case invoices
+    case bookings
+    case meetingsEvents
+    case securityNotifications
+    case promotions
+    case spam
+}
+
+struct BrowserMailDashboardPage<Row: Decodable & Equatable>: Decodable, Equatable {
+    let page: [Row]
+    let isDone: Bool
+    let continueCursor: String
+}
+
+extension BrowserMailDashboard {
+    static let empty = BrowserMailDashboard(
+        categoryCounts: [:],
+        securityCodes: [],
+        securityNotifications: [],
+        notifications: [],
+        supportThreads: [],
+        orders: [],
+        shipments: [],
+        subscriptions: [],
+        invoices: [],
+        bookings: [],
+        meetingsEvents: [],
+        promotions: [],
+        spam: []
+    )
+
+    func updating(
+        categoryCounts: [String: Int]? = nil,
+        securityCodes: [BrowserMailSecurityCode]? = nil,
+        securityNotifications: [BrowserMailSecurityNotification]? = nil,
+        notifications: [BrowserMailNotification]? = nil,
+        supportThreads: [BrowserMailSupportThreadSummary]? = nil,
+        orders: [BrowserMailOrderSummary]? = nil,
+        shipments: [BrowserMailShipmentSummary]? = nil,
+        subscriptions: [BrowserMailSubscriptionSummary]? = nil,
+        invoices: [BrowserMailInvoiceSummary]? = nil,
+        bookings: [BrowserMailBookingSummary]? = nil,
+        meetingsEvents: [BrowserMailMeetingEventSummary]? = nil,
+        promotions: [BrowserMailClassificationSummary]? = nil,
+        spam: [BrowserMailClassificationSummary]? = nil
+    ) -> BrowserMailDashboard {
+        BrowserMailDashboard(
+            categoryCounts: categoryCounts ?? self.categoryCounts,
+            securityCodes: securityCodes ?? self.securityCodes,
+            securityNotifications: securityNotifications ?? self.securityNotifications,
+            notifications: notifications ?? self.notifications,
+            supportThreads: supportThreads ?? self.supportThreads,
+            orders: orders ?? self.orders,
+            shipments: shipments ?? self.shipments,
+            subscriptions: subscriptions ?? self.subscriptions,
+            invoices: invoices ?? self.invoices,
+            bookings: bookings ?? self.bookings,
+            meetingsEvents: meetingsEvents ?? self.meetingsEvents,
+            promotions: promotions ?? self.promotions,
+            spam: spam ?? self.spam
+        )
+    }
+}
+
 struct BrowserMailThread: Identifiable, Equatable {
     let id: String
     /// Messages within the thread, oldest first.
@@ -556,6 +627,8 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
     @Published private(set) var mailMessages: [BrowserMailMessage] = []
     @Published private(set) var mailMessageBodies: [String: BrowserMailMessageBody] = [:]
     @Published private(set) var mailDashboard: BrowserMailDashboard?
+    @Published private(set) var dashboardLoadingSections: Set<BrowserMailDashboardSection> = []
+    @Published private(set) var dashboardDoneSections: Set<BrowserMailDashboardSection> = []
     @Published private(set) var hasMoreMailMessages = true
     @Published private(set) var isLoadingMoreMailMessages = false
     @Published private(set) var mailBackfillStates: [BrowserMailBackfillState] = []
@@ -572,12 +645,15 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
     private var cancellables: Set<AnyCancellable> = []
     private var mailMessagesCancellable: AnyCancellable?
     private var mailMessageBodyCancellables: [String: AnyCancellable] = [:]
+    private var dashboardPageCancellables: [BrowserMailDashboardSection: AnyCancellable] = [:]
+    private var dashboardPaginationCursors: [BrowserMailDashboardSection: String] = [:]
     private var hasMigratedLocalState = false
     private var hasAttemptedCachedLogin = false
     private var sessionToken: String?
 
     private let mailMessagePageSize: Double = 100
     private var mailMessagesLimit: Double = 100
+    private let dashboardPageSize: Double = 12
 
     var isSignedIn: Bool {
         authPhase == .signedIn
@@ -701,6 +777,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
             mailMessages = []
             mailMessageBodies = [:]
             mailDashboard = nil
+            resetMailDashboardPagination()
             mailMessageBodyCancellables.removeAll()
             mailMessagesLimit = mailMessagePageSize
             hasMoreMailMessages = true
@@ -746,6 +823,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
         }
 
         cancellables.removeAll()
+        resetMailDashboardPagination()
         client.subscribe(
             to: "google:connectedAccounts",
             with: ["sessionToken": sessionToken],
@@ -797,7 +875,7 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
                     }
                 },
                 receiveValue: { [weak self] dashboard in
-                    self?.mailDashboard = dashboard
+                    self?.mergeDashboardSnapshot(dashboard)
                 }
             )
             .store(in: &cancellables)
@@ -837,6 +915,241 @@ final class BrowserSessionController: ObservableObject, BrowserCloudSynchronizin
                 }
             )
             .store(in: &cancellables)
+    }
+
+    func hasMoreDashboardSection(_ section: BrowserMailDashboardSection) -> Bool {
+        !dashboardDoneSections.contains(section)
+    }
+
+    func isLoadingDashboardSection(_ section: BrowserMailDashboardSection) -> Bool {
+        dashboardLoadingSections.contains(section)
+    }
+
+    func loadMoreDashboardSection(_ section: BrowserMailDashboardSection) {
+        guard let client, let sessionToken, isSignedIn,
+              !dashboardLoadingSections.contains(section),
+              !dashboardDoneSections.contains(section) else {
+            return
+        }
+
+        dashboardLoadingSections.insert(section)
+        let cursor = dashboardPaginationCursors[section]
+        let paginationOpts = [
+            "numItems": dashboardPageSize,
+            "cursor": cursor,
+        ] as [String: ConvexEncodable?]
+        let args = [
+            "sessionToken": sessionToken,
+            "section": section.rawValue,
+            "paginationOpts": paginationOpts,
+        ] as [String: ConvexEncodable?]
+
+        switch section {
+        case .shipments:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.shipments,
+                update: { $0.updating(shipments: $1) },
+                rowType: BrowserMailShipmentSummary.self
+            )
+        case .subscriptions:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.subscriptions,
+                update: { $0.updating(subscriptions: $1) },
+                rowType: BrowserMailSubscriptionSummary.self
+            )
+        case .orders:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.orders,
+                update: { $0.updating(orders: $1) },
+                rowType: BrowserMailOrderSummary.self
+            )
+        case .securityCodes:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.securityCodes,
+                update: { $0.updating(securityCodes: $1) },
+                rowType: BrowserMailSecurityCode.self
+            )
+        case .notifications:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.notifications,
+                update: { $0.updating(notifications: $1) },
+                rowType: BrowserMailNotification.self
+            )
+        case .supportThreads:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.supportThreads,
+                update: { $0.updating(supportThreads: $1) },
+                rowType: BrowserMailSupportThreadSummary.self
+            )
+        case .invoices:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.invoices,
+                update: { $0.updating(invoices: $1) },
+                rowType: BrowserMailInvoiceSummary.self
+            )
+        case .bookings:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.bookings,
+                update: { $0.updating(bookings: $1) },
+                rowType: BrowserMailBookingSummary.self
+            )
+        case .meetingsEvents:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.meetingsEvents,
+                update: { $0.updating(meetingsEvents: $1) },
+                rowType: BrowserMailMeetingEventSummary.self
+            )
+        case .securityNotifications:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.securityNotifications,
+                update: { $0.updating(securityNotifications: $1) },
+                rowType: BrowserMailSecurityNotification.self
+            )
+        case .promotions:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.promotions,
+                update: { $0.updating(promotions: $1) },
+                rowType: BrowserMailClassificationSummary.self
+            )
+        case .spam:
+            subscribeDashboardPage(
+                client,
+                section: section,
+                args: args,
+                rows: \.spam,
+                update: { $0.updating(spam: $1) },
+                rowType: BrowserMailClassificationSummary.self
+            )
+        }
+    }
+
+    private func subscribeDashboardPage<Row: Decodable & Identifiable & Equatable>(
+        _ client: ConvexClient,
+        section: BrowserMailDashboardSection,
+        args: [String: ConvexEncodable?],
+        rows: KeyPath<BrowserMailDashboard, [Row]>,
+        update: @escaping (BrowserMailDashboard, [Row]) -> BrowserMailDashboard,
+        rowType _: Row.Type
+    ) where Row.ID: Hashable {
+        dashboardPageCancellables[section]?.cancel()
+        dashboardPageCancellables[section] = client.subscribe(
+            to: "mail:dashboardPage",
+            with: args,
+            yielding: BrowserMailDashboardPage<Row>.self
+        )
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    guard let self else { return }
+                    if case .failure(let error) = completion {
+                        NSLog("Convex mail dashboard page subscription failed: \(error)")
+                    }
+                    self.dashboardLoadingSections.remove(section)
+                    self.dashboardPageCancellables[section] = nil
+                },
+                receiveValue: { [weak self] page in
+                    guard let self else { return }
+                    let dashboard = self.mailDashboard ?? .empty
+                    let merged = Self.mergedRows(existing: dashboard[keyPath: rows], incoming: page.page)
+                    self.mailDashboard = update(dashboard, merged.rows)
+                    self.dashboardPaginationCursors[section] = page.continueCursor
+                    if page.isDone {
+                        self.dashboardDoneSections.insert(section)
+                    } else {
+                        self.dashboardDoneSections.remove(section)
+                    }
+                    self.dashboardLoadingSections.remove(section)
+                    self.dashboardPageCancellables[section]?.cancel()
+                    self.dashboardPageCancellables[section] = nil
+
+                    if merged.insertedCount == 0, !page.isDone {
+                        DispatchQueue.main.async {
+                            self.loadMoreDashboardSection(section)
+                        }
+                    }
+                }
+            )
+    }
+
+    private func mergeDashboardSnapshot(_ snapshot: BrowserMailDashboard) {
+        guard let current = mailDashboard else {
+            mailDashboard = snapshot
+            return
+        }
+
+        mailDashboard = snapshot.updating(
+            securityCodes: Self.mergedRows(existing: snapshot.securityCodes, incoming: current.securityCodes).rows,
+            securityNotifications: Self.mergedRows(
+                existing: snapshot.securityNotifications,
+                incoming: current.securityNotifications
+            ).rows,
+            notifications: Self.mergedRows(existing: snapshot.notifications, incoming: current.notifications).rows,
+            supportThreads: Self.mergedRows(existing: snapshot.supportThreads, incoming: current.supportThreads).rows,
+            orders: Self.mergedRows(existing: snapshot.orders, incoming: current.orders).rows,
+            shipments: Self.mergedRows(existing: snapshot.shipments, incoming: current.shipments).rows,
+            subscriptions: Self.mergedRows(existing: snapshot.subscriptions, incoming: current.subscriptions).rows,
+            invoices: Self.mergedRows(existing: snapshot.invoices, incoming: current.invoices).rows,
+            bookings: Self.mergedRows(existing: snapshot.bookings, incoming: current.bookings).rows,
+            meetingsEvents: Self.mergedRows(existing: snapshot.meetingsEvents, incoming: current.meetingsEvents).rows,
+            promotions: Self.mergedRows(existing: snapshot.promotions, incoming: current.promotions).rows,
+            spam: Self.mergedRows(existing: snapshot.spam, incoming: current.spam).rows
+        )
+    }
+
+    private func resetMailDashboardPagination() {
+        dashboardPageCancellables.values.forEach { $0.cancel() }
+        dashboardPageCancellables.removeAll()
+        dashboardPaginationCursors.removeAll()
+        dashboardLoadingSections.removeAll()
+        dashboardDoneSections.removeAll()
+    }
+
+    private static func mergedRows<Row: Identifiable>(
+        existing: [Row],
+        incoming: [Row]
+    ) -> (rows: [Row], insertedCount: Int) where Row.ID: Hashable {
+        var seen = Set(existing.map(\.id))
+        var merged = existing
+        var insertedCount = 0
+        for row in incoming where !seen.contains(row.id) {
+            seen.insert(row.id)
+            merged.append(row)
+            insertedCount += 1
+        }
+        return (merged, insertedCount)
     }
 
     func loadMoreMailMessages() {

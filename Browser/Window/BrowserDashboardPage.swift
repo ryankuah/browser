@@ -137,58 +137,58 @@ struct BrowserDashboardPage: View {
 
         LazyVGrid(columns: dashboardColumns, alignment: .leading, spacing: 20) {
             if !d.shipments.isEmpty {
-                shipmentsSection(d.shipments)
+                shipmentsSection(d.shipments, section: .shipments)
             }
 
             if !d.subscriptions.isEmpty {
-                subscriptionsCard(d.subscriptions)
+                subscriptionsCard(d.subscriptions, section: .subscriptions)
             }
 
             if !d.orders.isEmpty {
-                purchasesCard(d.orders)
+                purchasesCard(d.orders, section: .orders)
             }
 
             if !d.securityCodes.isEmpty {
-                securityCodesCard(d.securityCodes)
+                securityCodesCard(d.securityCodes, section: .securityCodes)
             }
 
             if !d.notifications.isEmpty {
-                notificationsCard(d.notifications)
+                notificationsCard(d.notifications, section: .notifications)
             }
 
             if !d.supportThreads.isEmpty {
-                supportCard(d.supportThreads)
+                supportCard(d.supportThreads, section: .supportThreads)
             }
 
             if !d.invoices.isEmpty {
-                invoicesCard(d.invoices)
+                invoicesCard(d.invoices, section: .invoices)
             }
 
             if !d.bookings.isEmpty {
-                bookingsCard(d.bookings)
+                bookingsCard(d.bookings, section: .bookings)
             }
 
             if !d.meetingsEvents.isEmpty {
-                meetingsEventsCard(d.meetingsEvents)
+                meetingsEventsCard(d.meetingsEvents, section: .meetingsEvents)
             }
 
             if hasAlerts {
-                securityCard(d.securityNotifications)
+                securityCard(d.securityNotifications, section: .securityNotifications)
             }
 
             if !d.promotions.isEmpty {
-                classificationCard(title: "Promotions", systemImage: "megaphone", rows: d.promotions)
+                classificationCard(title: "Promotions", systemImage: "megaphone", rows: d.promotions, section: .promotions)
             }
 
             if !d.spam.isEmpty {
-                classificationCard(title: "Spam", systemImage: "exclamationmark.octagon", rows: d.spam)
+                classificationCard(title: "Spam", systemImage: "exclamationmark.octagon", rows: d.spam, section: .spam)
             }
         }
     }
 
     // MARK: Sections
 
-    private func shipmentsSection(_ shipments: [BrowserMailShipmentSummary]) -> some View {
+    private func shipmentsSection(_ shipments: [BrowserMailShipmentSummary], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("On the way")
@@ -215,12 +215,15 @@ struct BrowserDashboardPage: View {
             }
 
             ScrollView(.vertical) {
-                LazyVGrid(columns: shipmentColumns, spacing: 12) {
-                    ForEach(shipments) { s in
-                        DashShipmentCard(shipment: s) {
-                            selectedMessage = s.message ?? s.messages?.first
+                VStack(spacing: 10) {
+                    LazyVGrid(columns: shipmentColumns, spacing: 12) {
+                        ForEach(shipments) { s in
+                            DashShipmentCard(shipment: s) {
+                                selectedMessage = s.message ?? s.messages?.first
+                            }
                         }
                     }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -229,7 +232,7 @@ struct BrowserDashboardPage: View {
         .frame(height: dashboardTileHeight)
     }
 
-    private func subscriptionsCard(_ subs: [BrowserMailSubscriptionSummary]) -> some View {
+    private func subscriptionsCard(_ subs: [BrowserMailSubscriptionSummary], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             HStack {
                 Text("Subscriptions & renewals")
@@ -246,6 +249,7 @@ struct BrowserDashboardPage: View {
                             selectedMessage = sub.message ?? sub.messages.first
                         }
                     }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -255,7 +259,7 @@ struct BrowserDashboardPage: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func securityCodesCard(_ codes: [BrowserMailSecurityCode]) -> some View {
+    private func securityCodesCard(_ codes: [BrowserMailSecurityCode], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             DashSectionHeader(title: "Security codes", count: "\(codes.count)", systemImage: "key.horizontal")
             ScrollView(.vertical) {
@@ -272,6 +276,7 @@ struct BrowserDashboardPage: View {
                             selectedMessage = code.message
                         }
                     }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -281,7 +286,7 @@ struct BrowserDashboardPage: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func notificationsCard(_ notifications: [BrowserMailNotification]) -> some View {
+    private func notificationsCard(_ notifications: [BrowserMailNotification], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             DashSectionHeader(title: "Notifications", count: "\(notifications.count)", systemImage: "bell.badge")
             ScrollView(.vertical) {
@@ -297,6 +302,7 @@ struct BrowserDashboardPage: View {
                             selectedMessage = notification.message
                         }
                     }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -306,7 +312,7 @@ struct BrowserDashboardPage: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func supportCard(_ threads: [BrowserMailSupportThreadSummary]) -> some View {
+    private func supportCard(_ threads: [BrowserMailSupportThreadSummary], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             DashSectionHeader(title: "Support", count: "\(threads.count)", systemImage: "lifepreserver")
             ScrollView(.vertical) {
@@ -322,6 +328,7 @@ struct BrowserDashboardPage: View {
                             selectedMessage = thread.message ?? thread.messages?.first
                         }
                     }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -331,7 +338,7 @@ struct BrowserDashboardPage: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func invoicesCard(_ invoices: [BrowserMailInvoiceSummary]) -> some View {
+    private func invoicesCard(_ invoices: [BrowserMailInvoiceSummary], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             DashSectionHeader(title: "Invoices & payments", count: "\(invoices.count)", systemImage: "doc.text")
             ScrollView(.vertical) {
@@ -349,6 +356,7 @@ struct BrowserDashboardPage: View {
                         selectedMessage = invoice.message ?? invoice.messages?.first
                     }
                 }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -358,7 +366,7 @@ struct BrowserDashboardPage: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func bookingsCard(_ bookings: [BrowserMailBookingSummary]) -> some View {
+    private func bookingsCard(_ bookings: [BrowserMailBookingSummary], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             DashSectionHeader(title: "Bookings", count: "\(bookings.count)", systemImage: "ticket")
             ScrollView(.vertical) {
@@ -381,6 +389,7 @@ struct BrowserDashboardPage: View {
                         selectedMessage = booking.message ?? booking.messages?.first
                     }
                 }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -390,7 +399,7 @@ struct BrowserDashboardPage: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func meetingsEventsCard(_ events: [BrowserMailMeetingEventSummary]) -> some View {
+    private func meetingsEventsCard(_ events: [BrowserMailMeetingEventSummary], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             DashSectionHeader(title: "Meetings & events", count: "\(events.count)", systemImage: "calendar.badge.clock")
             ScrollView(.vertical) {
@@ -406,6 +415,7 @@ struct BrowserDashboardPage: View {
                         selectedMessage = event.message ?? event.messages?.first
                     }
                 }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -418,7 +428,8 @@ struct BrowserDashboardPage: View {
     private func classificationCard(
         title: String,
         systemImage: String,
-        rows: [BrowserMailClassificationSummary]
+        rows: [BrowserMailClassificationSummary],
+        section: BrowserMailDashboardSection
     ) -> some View {
         DashCard {
             DashSectionHeader(title: title, count: "\(rows.count)", systemImage: systemImage)
@@ -435,6 +446,7 @@ struct BrowserDashboardPage: View {
                             selectedMessage = row.message
                         }
                     }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -444,7 +456,7 @@ struct BrowserDashboardPage: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func purchasesCard(_ orders: [BrowserMailOrderSummary]) -> some View {
+    private func purchasesCard(_ orders: [BrowserMailOrderSummary], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             HStack {
                 Text("Purchases reported")
@@ -461,6 +473,7 @@ struct BrowserDashboardPage: View {
                             selectedMessage = order.messages.first ?? order.message
                         }
                     }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -470,7 +483,7 @@ struct BrowserDashboardPage: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func securityCard(_ alerts: [BrowserMailSecurityNotification]) -> some View {
+    private func securityCard(_ alerts: [BrowserMailSecurityNotification], section: BrowserMailDashboardSection) -> some View {
         DashCard {
             HStack(spacing: 9) {
                 Circle().fill(Color(red: 0.94, green: 0.27, blue: 0.27)).frame(width: 7, height: 7)
@@ -488,6 +501,7 @@ struct BrowserDashboardPage: View {
                             selectedMessage = alert.message
                         }
                     }
+                    dashboardPagingFooter(for: section)
                 }
                 .padding(.trailing, 2)
             }
@@ -495,6 +509,14 @@ struct BrowserDashboardPage: View {
         }
         .frame(height: dashboardTileHeight)
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func dashboardPagingFooter(for section: BrowserMailDashboardSection) -> some View {
+        DashPagingFooter(
+            hasMore: session.hasMoreDashboardSection(section),
+            isLoading: session.isLoadingDashboardSection(section),
+            onLoadMore: { session.loadMoreDashboardSection(section) }
+        )
     }
 
     private func tuckedCard(promoCount: Int, spamCount: Int) -> some View {
@@ -607,6 +629,48 @@ private struct DashSectionHeader: View {
             Text(count)
                 .font(.system(size: 12, weight: .semibold).monospaced())
                 .foregroundStyle(DashColor.muted)
+        }
+    }
+}
+
+// MARK: - Paging Footer
+
+private struct DashPagingFooter: View {
+    let hasMore: Bool
+    let isLoading: Bool
+    let onLoadMore: () -> Void
+
+    var body: some View {
+        Group {
+            if hasMore {
+                HStack(spacing: 8) {
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.7)
+                    } else {
+                        Circle()
+                            .fill(DashColor.muted.opacity(0.5))
+                            .frame(width: 5, height: 5)
+                    }
+                    Text(isLoading ? "Loading more" : "More")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(DashColor.faint)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+                .onAppear(perform: triggerIfNeeded)
+                .onChange(of: isLoading) { _, _ in triggerIfNeeded() }
+            } else {
+                Color.clear.frame(height: 1)
+            }
+        }
+    }
+
+    private func triggerIfNeeded() {
+        if hasMore, !isLoading {
+            onLoadMore()
         }
     }
 }
